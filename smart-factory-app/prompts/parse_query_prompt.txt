@@ -1,0 +1,48 @@
+Given the user query: "{user_query}"
+
+Your task is to extract the following information:
+1.  **intent**: The primary goal of the user. Examples:
+    - "fetch_oee" (for queries about Overall Equipment Effectiveness)
+    - "get_maintenance_history" (for queries about past maintenance)
+    - "find_error_cause" (for troubleshooting or error analysis)
+    - "summarize_production" (for production summaries)
+    - "get_cycle_time" (for queries about cycle times)
+    - "get_downtime_summary" (for queries about machine downtime)
+    - "get_production_count" (for specific production numbers)
+    - "general_query" (if none of the above fit)
+2.  **machine_id**: The identifier of the machine, if mentioned (e.g., "CNC-001", "RobotArm-5", "M002").
+3.  **timestamp**: The specific time or time range mentioned (e.g., "yesterday", "last week", "2023-10-26", "today between 2 PM and 5 PM"). If a range, provide it.
+4.  **parameters**: Any other relevant parameters or filters mentioned. For example, if the user asks for "OEE above 80%", parameters would be {{"oee_threshold": 80}}.
+
+The user might use factory-specific terminology such as "OEE", "cycle time", "downtime", "anomaly detection", "predictive maintenance".
+
+Please return the information as a JSON object with keys "intent", "machine_id", "timestamp", and "parameters".
+If a piece of information is not found, use `null` or an empty string for its value.
+For "parameters", if none are found, use `null`.
+
+Example:
+User Query: "What was the OEE for machine CNC-002 yesterday, specifically if it was above 85%?"
+JSON Output:
+{{
+    "intent": "fetch_oee",
+    "machine_id": "CNC-002",
+    "timestamp": "yesterday",
+    "parameters": {{
+        "oee_threshold": 85
+    }}
+}}
+
+User Query: "Show me the downtime for OP-10 last week."
+JSON Output:
+{{
+    "intent": "get_downtime_summary",
+    "machine_id": "OP-10",
+    "timestamp_range": {{
+        "start": "start of last week",
+        "end": "end of last week"
+    }},
+    "parameters": null
+}}
+
+Now, process the query: "{user_query}"
+JSON Output:

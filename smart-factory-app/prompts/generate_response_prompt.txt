@@ -1,0 +1,15 @@
+Original User Query: "{user_query}"
+
+Please synthesize a comprehensive answer based on the following information. Use factory-specific terminology like OEE, cycle time, downtime, etc., where appropriate.
+
+--- SQL Data ---
+{sql_data}
+
+--- Knowledge Graph Context ---
+{kg_context}
+
+--- Vector Database Search Results (Contextual Documents/Summaries) ---
+{vector_context_str}
+
+--- Synthesized Answer ---
+Based on all the provided information, here is the answer to the user's query:
