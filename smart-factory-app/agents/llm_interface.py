@@ -87,10 +87,60 @@ class MockOllama:
                     "timestamp": "today",
                     "parameters": None
                 })
-            else:
+            elif "alarms for machine 'cnc-001' yesterday" in prompt.lower():
                 return json.dumps({
-                    "intent": "unknown", 
-                    "machine_id": None, 
+                    "intent": "get_alarms",
+                    "machine_id": "CNC-001",
+                    "timestamp": "yesterday",
+                    "parameters": None
+                })
+            elif "hourly production count for 'welder-003'" in prompt.lower() and "june 15th, 2024" in prompt.lower() :
+                return json.dumps({
+                    "intent": "get_hourly_data",
+                    "machine_id": "Welder-003",
+                    "timestamp": "2024-06-15",
+                    "parameters": {"kpi_name": "production_count"}
+                })
+            elif "current status of 'press-002'" in prompt.lower():
+                return json.dumps({
+                    "intent": "get_status",
+                    "machine_id": "Press-002",
+                    "timestamp": "current",
+                    "parameters": None
+                })
+            elif "production goals for 'assembler-005'" in prompt.lower():
+                return json.dumps({
+                    "intent": "get_production_goals",
+                    "machine_id": "Assembler-005",
+                    "timestamp": None,
+                    "parameters": None
+                })
+            elif "compare the daily oee for 'cnc-001' and 'cnc-002' last week" in prompt.lower():
+                return json.dumps({
+                    "intent": "compare_daily_oee",
+                    "machine_id": None,
+                    "timestamp_range": {"start": "start of last week", "end": "end of last week"},
+                    "parameters": {"comparison_items": ["CNC-001", "CNC-002"], "kpi_name": "OEE"}
+                })
+            elif "type of machine is eqp-101" in prompt.lower():
+                 return json.dumps({
+                    "intent": "get_equipment_details",
+                    "machine_id": "EQP-101",
+                    "timestamp": null, # JSON null
+                    "parameters": null
+                })
+            elif "temperature for sensor s1 on machine mtr-5" in prompt.lower():
+                return json.dumps({
+                    "intent": "get_minute_data",
+                    "machine_id": "MTR-5",
+                    "timestamp": "today at 3:45 PM", # Assuming the prompt captured this detail
+                    "parameters": {"sensor_id": "S1", "parameter_name": "Temperature"}
+                })
+            else:
+                # Fallback for unknown queries within parse_query simulation
+                return json.dumps({
+                    "intent": "unknown",
+                    "machine_id": None,
                     "timestamp": None,
                     "parameters": None
                 })

@@ -113,68 +113,88 @@ class TestETLPipeline(unittest.TestCase):
     @patch('smart_factory_app.data_pipelines.etl_to_vector_db.fetch_data_from_sql')
     @patch('smart_factory_app.data_pipelines.etl_to_vector_db.generate_text_summaries')
     @patch('smart_factory_app.data_pipelines.etl_to_vector_db.VectorAgent')
-    def test_run_etl_process_flow(self, MockVectorAgent, mock_generate_summaries, 
-                                  mock_fetch_data, mock_create_engine):
-        """Test the main run_etl flow, mocking major components."""
-        # Setup mocks
+    def test_run_etl_process_flow_with_new_table_configs(self, MockVectorAgent, mock_generate_summaries, 
+                                                         mock_fetch_data, mock_create_engine):
+        """Test the main run_etl flow using TABLE_CONFIGS."""
         mock_engine_instance = MagicMock()
         mock_create_engine.return_value = mock_engine_instance
         
         mock_vector_agent_instance = MagicMock()
         MockVectorAgent.return_value = mock_vector_agent_instance
 
-        # Mock data for two tables
-        df_prod = pd.DataFrame({'machine_id': ['M1'], 'timestamp': [datetime.now()]})
-        summaries_prod = ["prod summary1"]
-        metadatas_prod = [{"src": "prod1"}]
+        # Simulate data for a subset of tables from TABLE_CONFIGS for this test
+        # Example: equipment and equipment_alarm
+        df_equipment = pd.DataFrame({
+            'machine_id': ['EQP-001'], 'machine_name': ['Welder'], 
+            'machine_type': ['Robotic Welder'], 'location': ['Cell A'],
+            'manufacturer': ['WeldCorp'], 'install_date': [datetime(2023,1,1)]
+        })
+        summaries_equipment = ["Equipment EQP-001 summary"]
+        metadatas_equipment = [{"table_origin": "equipment", "machine_id": "EQP-001"}]
+
+        df_alarm = pd.DataFrame({
+            'alarm_id': ['ALM001'], 'machine_id': ['EQP-001'], 
+            'start_timestamp': [datetime(2023,10,1,10,0,0)], 'end_timestamp': [datetime(2023,10,1,10,5,0)],
+            'alarm_code': ['E-105'], 'alarm_description': ['Pressure too high'], 'severity': [2]
+        })
+        summaries_alarm = ["Alarm E-105 on EQP-001 summary"]
+        metadatas_alarm = [{"table_origin": "equipment_alarm", "alarm_id": "ALM001"}]
+
+        # Configure side effects for mock_fetch_data
+        # It will be called for each table in config.TABLE_CONFIGS
+        # We need to return appropriate DataFrames based on table name.
+        def fetch_data_side_effect(engine, table_name, columns, time_col, days_fetch):
+            if table_name == "equipment":
+                return df_equipment
+            elif table_name == "equipment_alarm":
+                return df_alarm
+            # Return empty DataFrame for other tables in TABLE_CONFIGS to simplify this test
+            return pd.DataFrame(columns=columns) 
         
-        df_down = pd.DataFrame({'machine_id': ['M2'], 'start_time': [datetime.now()]})
-        summaries_down = ["down summary1"]
-        metadatas_down = [{"src": "down1"}]
+        mock_fetch_data.side_effect = fetch_data_side_effect
 
-        # Configure side effects for functions called per table
-        mock_fetch_data.side_effect = [df_prod, df_down, pd.DataFrame()] # Last one for maintenance_records (empty)
-        mock_generate_summaries.side_effect = [
-            (summaries_prod, metadatas_prod),
-            (summaries_down, metadatas_down),
-            ([], []) # For maintenance_records
-        ]
+        # Configure side effects for mock_generate_summaries
+        def generate_summaries_side_effect(df, table_name):
+            if table_name == "equipment":
+                return summaries_equipment, metadatas_equipment
+            elif table_name == "equipment_alarm":
+                return summaries_alarm, metadatas_alarm
+            return [], [] # Empty for other tables
 
+        mock_generate_summaries.side_effect = generate_summaries_side_effect
+        
         # Call the main ETL function
-        etl_to_vector_db.run_etl()
+        with patch('smart_factory_app.data_pipelines.etl_to_vector_db.TABLE_CONFIGS', config.TABLE_CONFIGS): # Ensure it uses the actual config
+            etl_to_vector_db.run_etl()
 
         # Assertions
         mock_create_engine.assert_called_once_with(config.DATABASE_URI)
-        MockVectorAgent.assert_called_once() # VectorAgent should be initialized
+        MockVectorAgent.assert_called_once()
 
-        # Check calls for fetch_data_from_sql (for each table in tables_to_process config)
-        # The current etl_to_vector_db.py has 3 tables configured.
-        self.assertEqual(mock_fetch_data.call_count, 3)
-        calls_fetch = [
-            call(mock_engine_instance, "production_logs", ANY, ANY, ANY),
-            call(mock_engine_instance, "downtime_logs", ANY, ANY, ANY),
-            call(mock_engine_instance, "maintenance_records", ANY, ANY, ANY) 
-        ]
-        # mock_fetch_data.assert_has_calls(calls_fetch, any_order=False) # Order matters here
-        # Check specific calls if order is strict or details matter for each
-        self.assertEqual(mock_fetch_data.call_args_list[0][0][1], "production_logs") # Table name of first call
-        self.assertEqual(mock_fetch_data.call_args_list[1][0][1], "downtime_logs") # Table name of second call
+        # Check calls for fetch_data_from_sql for all tables in TABLE_CONFIGS
+        self.assertEqual(mock_fetch_data.call_count, len(config.TABLE_CONFIGS))
+        for table_name, table_spec in config.TABLE_CONFIGS.items():
+            expected_days_to_fetch = table_spec.get("days_to_fetch", 7 if table_spec.get("time_window_column") else None)
+            mock_fetch_data.assert_any_call(
+                mock_engine_instance, 
+                table_name, 
+                table_spec["columns_to_fetch"],
+                table_spec.get("time_window_column"),
+                expected_days_to_fetch
+            )
+        
+        # Check calls for generate_text_summaries (called for non-empty DFs)
+        self.assertEqual(mock_generate_summaries.call_count, len(config.TABLE_CONFIGS))
+        mock_generate_summaries.assert_any_call(df_equipment, "equipment")
+        mock_generate_summaries.assert_any_call(df_alarm, "equipment_alarm")
 
-        # Check calls for generate_text_summaries
-        self.assertEqual(mock_generate_summaries.call_count, 3) # Called for non-empty DFs
-        # mock_generate_summaries.assert_any_call(df_prod, "production_logs") # This check is tricky with DataFrame equality
-        # mock_generate_summaries.assert_any_call(df_down, "downtime_logs")
-        self.assertEqual(mock_generate_summaries.call_args_list[0][0][1], "production_logs")
-        self.assertEqual(mock_generate_summaries.call_args_list[1][0][1], "downtime_logs")
-
-
-        # Check calls for vector_agent.add_texts
-        self.assertEqual(mock_vector_agent_instance.add_texts.call_count, 2) # Called for prod and downtime
+        # Check calls for vector_agent.add_texts (called for tables that yielded summaries)
+        self.assertEqual(mock_vector_agent_instance.add_texts.call_count, 2) 
         calls_add_texts = [
-            call(texts=summaries_prod, metadatas=metadatas_prod),
-            call(texts=summaries_down, metadatas=metadatas_down)
+            call(texts=summaries_equipment, metadatas=metadatas_equipment),
+            call(texts=summaries_alarm, metadatas=metadatas_alarm)
         ]
-        mock_vector_agent_instance.add_texts.assert_has_calls(calls_add_texts, any_order=False)
+        mock_vector_agent_instance.add_texts.assert_has_calls(calls_add_texts, any_order=True) # Order might vary if dict iteration order changes
 
 
     @patch.dict(os.environ, {"ETL_USE_MOCK_DB": "true"})

@@ -1,26 +1,39 @@
 Given the user query: "{user_query}"
 
-Your task is to extract the following information:
+Your task is to extract the following information. The user might be asking about factory equipment, its performance, status, alarms, or production goals. Refer to concepts like Overall Equipment Effectiveness (OEE), Key Performance Indicators (KPIs), cycle times, downtime, alarms, maintenance schedules, and production targets.
+
 1.  **intent**: The primary goal of the user. Examples:
-    - "fetch_oee" (for queries about Overall Equipment Effectiveness)
-    - "get_maintenance_history" (for queries about past maintenance)
-    - "find_error_cause" (for troubleshooting or error analysis)
-    - "summarize_production" (for production summaries)
-    - "get_cycle_time" (for queries about cycle times)
-    - "get_downtime_summary" (for queries about machine downtime)
-    - "get_production_count" (for specific production numbers)
-    - "general_query" (if none of the above fit)
-2.  **machine_id**: The identifier of the machine, if mentioned (e.g., "CNC-001", "RobotArm-5", "M002").
-3.  **timestamp**: The specific time or time range mentioned (e.g., "yesterday", "last week", "2023-10-26", "today between 2 PM and 5 PM"). If a range, provide it.
-4.  **parameters**: Any other relevant parameters or filters mentioned. For example, if the user asks for "OEE above 80%", parameters would be {{"oee_threshold": 80}}.
+    - "fetch_oee" (for queries about Overall Equipment Effectiveness, typically from daily or aggregated data)
+    - "get_maintenance_history" (for queries about past maintenance, could be from alarm data or status logs if they indicate maintenance)
+    - "find_error_cause" (for troubleshooting or error analysis, often related to alarms or status changes)
+    - "summarize_production" (for production summaries, from daily, hourly, or other aggregated data)
+    - "get_cycle_time" (for queries about cycle times, potentially from minute or hourly data)
+    - "get_downtime_summary" (for queries about machine downtime, could be from status or alarm tables)
+    - "get_production_count" (for specific production numbers, from daily or hourly data)
+    - "get_alarms" (for queries specifically asking for alarm events or history)
+    - "get_hourly_data" (for queries asking for data at an hourly resolution, like production counts, specific KPIs)
+    - "get_minute_data" (for queries asking for fine-grained sensor readings or parameters)
+    - "get_status" (for queries about the current or past status of equipment)
+    - "get_equipment_details" (for queries about specific equipment attributes like type, manufacturer)
+    - "get_production_goals" (for queries about production targets or goals)
+    - "compare_daily_oee" (for comparing OEE of multiple machines)
+    - "general_query" (if none of the above fit or it's a broad question)
 
-The user might use factory-specific terminology such as "OEE", "cycle time", "downtime", "anomaly detection", "predictive maintenance".
+2.  **machine_id**: The identifier of the machine(s) or equipment, if mentioned (e.g., "CNC-001", "RobotArm-5", "M002", "Welder-003"). This could also be a list if multiple machines are mentioned.
+3.  **timestamp**: The specific time or time range mentioned (e.g., "yesterday", "last week", "2023-10-26", "today between 2 PM and 5 PM", "June 15th, 2024"). If a range, provide it.
+4.  **parameters**: Any other relevant parameters or filters mentioned. Examples:
+    - If the user asks for "OEE above 80%", parameters would be {{"oee_threshold": 80}}.
+    - If asking for specific KPIs: {{"kpi_name": "production_rate"}}.
+    - If asking for specific alarm codes: {{"alarm_code": "ERR-502"}}.
+    - If comparing multiple items: {{"comparison_items": ["CNC-001", "CNC-002"]}}.
+    - If asking about specific sensor parameters: {{"parameter_name": "Temperature"}}.
 
-Please return the information as a JSON object with keys "intent", "machine_id", "timestamp", and "parameters".
+Please return the information as a JSON object with keys "intent", "machine_id", "timestamp" (or "timestamp_range"), and "parameters".
 If a piece of information is not found, use `null` or an empty string for its value.
 For "parameters", if none are found, use `null`.
 
-Example:
+Example Scenarios:
+
 User Query: "What was the OEE for machine CNC-002 yesterday, specifically if it was above 85%?"
 JSON Output:
 {{
@@ -42,6 +55,80 @@ JSON Output:
         "end": "end of last week"
     }},
     "parameters": null
+}}
+
+User Query: "Show all alarms for machine 'CNC-001' yesterday."
+JSON Output:
+{{
+    "intent": "get_alarms",
+    "machine_id": "CNC-001",
+    "timestamp": "yesterday",
+    "parameters": null
+}}
+
+User Query: "What was the hourly production count for 'Welder-003' on June 15th, 2024?"
+JSON Output:
+{{
+    "intent": "get_hourly_data",
+    "machine_id": "Welder-003",
+    "timestamp": "2024-06-15",
+    "parameters": {{
+        "kpi_name": "production_count"
+    }}
+}}
+
+User Query: "What is the current status of 'Press-002'?"
+JSON Output:
+{{
+    "intent": "get_status",
+    "machine_id": "Press-002",
+    "timestamp": "current",
+    "parameters": null
+}}
+
+User Query: "List production goals for 'Assembler-005'."
+JSON Output:
+{{
+    "intent": "get_production_goals",
+    "machine_id": "Assembler-005",
+    "timestamp": null,
+    "parameters": null
+}}
+
+User Query: "Compare the daily OEE for 'CNC-001' and 'CNC-002' last week."
+JSON Output:
+{{
+    "intent": "compare_daily_oee",
+    "machine_id": null, # Or could list them if primary focus isn't singular
+    "timestamp_range": {{
+        "start": "start of last week",
+        "end": "end of last week"
+    }},
+    "parameters": {{
+        "comparison_items": ["CNC-001", "CNC-002"],
+        "kpi_name": "OEE"
+    }}
+}}
+
+User Query: "What type of machine is EQP-101 and who made it?"
+JSON Output:
+{{
+    "intent": "get_equipment_details",
+    "machine_id": "EQP-101",
+    "timestamp": null,
+    "parameters": null
+}}
+
+User Query: "Fetch temperature for Sensor S1 on machine MTR-5 at 3:45 PM today."
+JSON Output:
+{{
+    "intent": "get_minute_data",
+    "machine_id": "MTR-5",
+    "timestamp": "today at 3:45 PM",
+    "parameters": {{
+        "sensor_id": "S1",
+        "parameter_name": "Temperature"
+    }}
 }}
 
 Now, process the query: "{user_query}"

@@ -19,7 +19,7 @@ if project_root_etl not in sys.path:
 # --- Import VectorAgent and Configuration ---
 try:
     from smart_factory_app.agents.vector_agent import VectorAgent
-    from smart_factory_app.config.config import DATABASE_URI, ETL_USE_MOCK_DB
+    from smart_factory_app.config.config import DATABASE_URI, ETL_USE_MOCK_DB, TABLE_CONFIGS
     CONFIG_LOADED = True
 except ImportError as e:
     print(f"Error importing VectorAgent or config: {e}. Using fallback configurations.")
@@ -66,61 +66,132 @@ def fetch_data_from_sql(engine, table_name: str, columns: list[str],
         log_message(f"Error fetching data from '{table_name}': {e}")
         return pd.DataFrame() # Return empty DataFrame on error
 
-# --- Text Summary Generation ---
-def generate_production_log_summary(row: pd.Series) -> tuple[str, dict]:
-    """Generates text summary and metadata for a production_logs row."""
-    # Assuming columns like: timestamp, machine_id, factory_id, part_count, oee_percentage, status
-    # Handle potential missing columns gracefully for placeholder data
+# --- Text Summary Generation Functions for New Schema ---
+
+def generate_equipment_summary(row: pd.Series) -> tuple[str, dict]:
+    """Generates text summary and metadata for 'equipment' table row."""
+    machine_id = row.get('machine_id', 'N/A')
+    name = row.get('machine_name', 'Unknown Name')
+    m_type = row.get('machine_type', 'N/A')
+    location = row.get('location', 'N/A')
+    manufacturer = row.get('manufacturer', 'N/A')
+    install_date = row.get('install_date', 'N/A')
+    summary = (f"Equipment Record: Machine ID {machine_id} (Name: {name}, Type: {m_type}) is located at {location}. "
+               f"Manufactured by {manufacturer}, installed on {install_date}.")
+    metadata = {"table_origin": "equipment", **row.to_dict()}
+    return summary, metadata
+
+def generate_equipment_data_minute_summary(row: pd.Series) -> tuple[str, dict]:
+    """Generates summary for 'equipment_data_minute'."""
     ts = row.get('timestamp', 'N/A')
-    machine_id = row.get('machine_id', 'Unknown Machine')
-    factory_id = row.get('factory_id', 'Unknown Factory')
-    part_count = row.get('part_count', 0)
-    oee = row.get('oee_percentage', 0.0)
-    status = row.get('status', 'N/A')
-
-    summary = (f"On {ts}, machine {machine_id} in factory {factory_id} produced {part_count} parts. "
-               f"Operational status was '{status}' with an OEE of {oee}%.")
-    
-    metadata = {
-        "table_origin": "production_logs",
-        "timestamp": str(ts), # Ensure datetime is serialized
-        "machine_id": machine_id,
-        "factory_id": factory_id,
-        "part_count": part_count,
-        "oee_percentage": oee,
-        "status": status,
-        **row.to_dict() # Include all original columns in metadata
-    }
+    machine_id = row.get('machine_id', 'N/A')
+    sensor_id = row.get('sensor_id', 'N/A')
+    param_name = row.get('parameter_name', 'N/A')
+    param_value = row.get('parameter_value', 'N/A')
+    unit = row.get('unit', '')
+    summary = (f"Minute Data: At {ts}, machine {machine_id} sensor {sensor_id} reported parameter '{param_name}' "
+               f"as {param_value} {unit}.")
+    metadata = {"table_origin": "equipment_data_minute", "timestamp": str(ts), **row.to_dict()}
     return summary, metadata
 
-def generate_downtime_log_summary(row: pd.Series) -> tuple[str, dict]:
-    """Generates text summary and metadata for a downtime_logs row."""
-    # Assuming columns: machine_id, factory_id, start_time, end_time, fault_code, downtime_details, duration_minutes
-    machine_id = row.get('machine_id', 'Unknown Machine')
-    factory_id = row.get('factory_id', 'Unknown Factory')
-    start_time = row.get('start_time', 'N/A')
-    fault_code = row.get('fault_code', 'N/A')
-    details = row.get('downtime_details', 'No details provided')
-    duration = row.get('duration_minutes', 0)
-
-    summary = (f"Machine {machine_id} in factory {factory_id} experienced downtime starting at {start_time} "
-               f"due to fault code '{fault_code}' (Details: {details}). Downtime lasted for {duration} minutes.")
-    
-    metadata = {
-        "table_origin": "downtime_logs",
-        "start_time": str(start_time),
-        "machine_id": machine_id,
-        "factory_id": factory_id,
-        "fault_code": fault_code,
-        "downtime_details": details,
-        "duration_minutes": duration,
-        **row.to_dict()
-    }
+def generate_equipment_data_hourly_summary(row: pd.Series) -> tuple[str, dict]:
+    """Generates summary for 'equipment_data_hourly'."""
+    ts = row.get('timestamp', 'N/A')
+    machine_id = row.get('machine_id', 'N/A')
+    kpi_name = row.get('kpi_name', 'N/A')
+    kpi_value = row.get('kpi_value', 'N/A')
+    quality = row.get('quality_score', 'N/A')
+    summary = (f"Hourly Data: At {ts}, machine {machine_id} had KPI '{kpi_name}' with value {kpi_value}. "
+               f"Quality score was {quality}.")
+    metadata = {"table_origin": "equipment_data_hourly", "timestamp": str(ts), **row.to_dict()}
     return summary, metadata
+
+def generate_equipment_data_daily_summary(row: pd.Series) -> tuple[str, dict]:
+    """Generates summary for 'equipment_data_daily'."""
+    date = row.get('date', 'N/A')
+    machine_id = row.get('machine_id', 'N/A')
+    avg_oee = row.get('avg_oee', 'N/A')
+    total_prod = row.get('total_production', 'N/A')
+    total_downtime = row.get('total_downtime_minutes', 'N/A')
+    summary = (f"Daily Summary for {date}: Machine {machine_id} had an average OEE of {avg_oee}%, "
+               f"produced {total_prod} units, and experienced {total_downtime} minutes of downtime.")
+    metadata = {"table_origin": "equipment_data_daily", "date": str(date), **row.to_dict()}
+    return summary, metadata
+
+def generate_generic_equipment_timeseries_summary(row: pd.Series, table_name: str, period_col: str, oee_col: str, prod_col: str) -> tuple[str, dict]:
+    """Generic summary for monthly/quarterly equipment data."""
+    period_val = row.get(period_col, 'N/A')
+    machine_id = row.get('machine_id', 'N/A')
+    avg_oee = row.get(oee_col, 'N/A')
+    total_prod = row.get(prod_col, 'N/A')
+    period_name = table_name.split('_')[-1].capitalize() # Monthly, Quarterly
+    
+    summary = (f"{period_name} Summary for {period_val}: Machine {machine_id} had an average OEE of {avg_oee}% "
+               f"and produced {total_prod} units.")
+    metadata = {"table_origin": table_name, period_col: str(period_val), **row.to_dict()}
+    return summary, metadata
+
+
+def generate_equipment_status_summary(row: pd.Series) -> tuple[str, dict]:
+    """Generates summary for 'equipment_status'."""
+    ts = row.get('timestamp', 'N/A')
+    machine_id = row.get('machine_id', 'N/A')
+    status_code = row.get('status_code', 'N/A')
+    status_desc = row.get('status_description', 'N/A')
+    duration = row.get('duration_seconds', 'N/A')
+    summary = (f"Status Update: At {ts}, machine {machine_id} reported status '{status_desc}' (Code: {status_code}). "
+               f"This status lasted for {duration} seconds.")
+    metadata = {"table_origin": "equipment_status", "timestamp": str(ts), **row.to_dict()}
+    return summary, metadata
+
+def generate_equipment_alarm_summary(row: pd.Series) -> tuple[str, dict]:
+    """Generates summary for 'equipment_alarm'."""
+    alarm_id = row.get('alarm_id', 'N/A')
+    machine_id = row.get('machine_id', 'N/A')
+    start_ts = row.get('start_timestamp', 'N/A')
+    end_ts = row.get('end_timestamp', 'N/A')
+    alarm_code = row.get('alarm_code', 'N/A')
+    alarm_desc = row.get('alarm_description', 'N/A')
+    severity = row.get('severity', 'N/A')
+    summary = (f"Alarm Event: Alarm ID {alarm_id} (Code: {alarm_code}, Severity: {severity}) occurred on machine {machine_id}. "
+               f"Started: {start_ts}, Ended: {end_ts}. Description: {alarm_desc}.")
+    metadata = {"table_origin": "equipment_alarm", "start_timestamp": str(start_ts), **row.to_dict()}
+    return summary, metadata
+
+def generate_equipment_product_goal_summary(row: pd.Series) -> tuple[str, dict]:
+    """Generates summary for 'equipment_product_goal'."""
+    goal_id = row.get('goal_id', 'N/A')
+    machine_id = row.get('machine_id', 'N/A')
+    product_id = row.get('product_id', 'N/A')
+    target_rate = row.get('target_production_rate', 'N/A')
+    target_quality = row.get('target_quality_rate', 'N/A')
+    start_date = row.get('start_date', 'N/A')
+    end_date = row.get('end_date', 'N/A')
+    summary = (f"Production Goal ID {goal_id}: For machine {machine_id} and product {product_id}, the target production rate "
+               f"is {target_rate} units/hour with a quality rate of {target_quality}%. Goal active from {start_date} to {end_date}.")
+    metadata = {"table_origin": "equipment_product_goal", **row.to_dict()}
+    return summary, metadata
+
+
+# --- Main Summary Dispatcher ---
+SUMMARY_GENERATORS = {
+    "equipment": generate_equipment_summary,
+    "equipment_data_minute": generate_equipment_data_minute_summary,
+    "equipment_data_hourly": generate_equipment_data_hourly_summary,
+    "equipment_data_daily": generate_equipment_data_daily_summary,
+    "equipment_data_monthly": lambda row: generate_generic_equipment_timeseries_summary(row, "equipment_data_monthly", "month_year", "monthly_avg_oee", "monthly_total_production"),
+    "equipment_data_quarterly": lambda row: generate_generic_equipment_timeseries_summary(row, "equipment_data_quarterly", "quarter_year", "quarterly_avg_oee", "quarterly_total_production"),
+    "equipment_status": generate_equipment_status_summary,
+    "equipment_alarm": generate_equipment_alarm_summary,
+    "equipment_product_goal": generate_equipment_product_goal_summary,
+    # Add old ones if still needed, or remove if schema fully changed
+    # "production_logs": generate_production_log_summary, # Example if keeping old
+    # "downtime_logs": generate_downtime_log_summary,     # Example if keeping old
+}
 
 def generate_text_summaries(df: pd.DataFrame, table_name: str) -> tuple[list[str], list[dict]]:
     """
-    Generates text summaries and metadatas from a DataFrame based on table_name.
+    Generates text summaries and metadatas from a DataFrame based on table_name, using SUMMARY_GENERATORS.
     """
     summaries = []
     metadatas = []
@@ -129,24 +200,19 @@ def generate_text_summaries(df: pd.DataFrame, table_name: str) -> tuple[list[str
         log_message(f"No data to summarize for table '{table_name}'.")
         return summaries, metadatas
 
+    generator_func = SUMMARY_GENERATORS.get(table_name)
+
     log_message(f"Generating summaries for {len(df)} rows from '{table_name}'...")
     for _, row in df.iterrows():
-        summary, meta = None, None
-        if table_name == "production_logs":
-            summary, meta = generate_production_log_summary(row)
-        elif table_name == "downtime_logs":
-            summary, meta = generate_downtime_log_summary(row)
-        # Add more elif conditions here for other tables
+        if generator_func:
+            summary, meta = generator_func(row)
         else:
-            log_message(f"No summary generation logic defined for table: {table_name}. Skipping row.")
-            # Generic summary as a fallback
-            generic_summary = f"Data from table '{table_name}': {row.to_dict()}"
-            generic_meta = {"table_origin": table_name, **row.to_dict()}
-            summary, meta = generic_summary, generic_meta
+            log_message(f"No specific summary generation logic defined for table: {table_name}. Creating generic summary.")
+            summary = f"Generic summary for table '{table_name}': {row.to_dict()}"
+            meta = {"table_origin": table_name, **row.to_dict()}
             
-        if summary and meta:
-            summaries.append(summary)
-            metadatas.append(meta)
+        summaries.append(summary)
+        metadatas.append(meta)
     
     log_message(f"Generated {len(summaries)} summaries for '{table_name}'.")
     return summaries, metadatas
@@ -186,41 +252,29 @@ def run_etl():
         sys.exit(1)
 
 
-    # Define tables and their processing configurations
-    # In a real scenario, this could come from a config file
-    tables_to_process = [
-        {
-            "table_name": "production_logs",
-            "columns": ["timestamp", "machine_id", "factory_id", "part_count", "oee_percentage", "status"],
-            "time_window_column": "timestamp", # Filter by this column
-            "days_to_fetch": 7 # Fetch data from the last 7 days
-        },
-        {
-            "table_name": "downtime_logs",
-            "columns": ["machine_id", "factory_id", "start_time", "end_time", "fault_code", "downtime_details", "duration_minutes"],
-            "time_window_column": "start_time",
-            "days_to_fetch": 30 
-        },
-        # Example: A table that might not have a time window or uses all columns
-        {
-            "table_name": "maintenance_records",
-            "columns": ["record_id", "machine_id", "maintenance_date", "description", "technician"],
-            # No time_window_column or days_to_fetch means fetch all data
-        }
-    ]
+    # Define tables to process using TABLE_CONFIGS from config.py
+    if not CONFIG_LOADED or not TABLE_CONFIGS:
+        log_message("TABLE_CONFIGS not loaded from config. Aborting ETL.")
+        return
 
-    for table_config in tables_to_process:
-        table_name = table_config["table_name"]
+    # Default days_to_fetch if not specified per table, can be overridden in TABLE_CONFIGS
+    default_days_to_fetch = 7 
+
+    for table_name, table_spec in TABLE_CONFIGS.items():
         log_message(f"--- Processing table: {table_name} ---")
 
+        columns_to_fetch = table_spec["columns_to_fetch"]
+        time_window_column = table_spec.get("time_window_column")
+        # Allow days_to_fetch to be specified per table in config, else use default
+        days_to_fetch_for_table = table_spec.get("days_to_fetch", default_days_to_fetch if time_window_column else None)
+
         # 1. Fetch data
-        # For testing without a live DB, we can mock this part or ensure tables exist with some data
         df = fetch_data_from_sql(
             engine, 
             table_name, 
-            table_config["columns"],
-            table_config.get("time_window_column"),
-            table_config.get("days_to_fetch")
+            columns_to_fetch,
+            time_window_column,
+            days_to_fetch_for_table 
         )
 
         if df.empty:
@@ -267,41 +321,74 @@ if __name__ == "__main__":
         
         def mock_fetch_data_from_sql_etl(engine, table_name: str, columns: list[str], 
                                      time_window_column: str = None, days_to_fetch: int = None) -> pd.DataFrame:
-            log_message(f"[MOCK ETL] Fetching data for table '{table_name}'.")
-            if table_name == "production_logs":
-                data = {
-                    'timestamp': [datetime.now() - timedelta(days=x) for x in range(5)],
-                    'machine_id': [f'M00{x}' for x in range(1, 6)], 'factory_id': ['F01'] * 5,
-                    'part_count': [100, 110, 105, 98, 112],
-                    'oee_percentage': [85.5, 88.0, 86.2, 83.1, 89.5],
-                    'status': ['Normal'] * 4 + ['Maintenance Required']
+            log_message(f"[MOCK ETL] Fetching data for table '{table_name}'. Columns: {columns}")
+            mock_data = {}
+            num_rows = 2 # Default number of mock rows
+
+            if table_name == "equipment":
+                mock_data = {
+                    'machine_id': [f'EQP-{i}' for i in range(num_rows)],
+                    'machine_name': [f'Equipment Name {i}' for i in range(num_rows)],
+                    'machine_type': ['Type A', 'Type B'][:num_rows],
+                    'location': ['Shopfloor 1', 'Shopfloor 2'][:num_rows],
+                    'manufacturer': ['ManuCorp', 'GlobalManu'][:num_rows],
+                    'install_date': [datetime(2022, 1, 1+i) for i in range(num_rows)]
                 }
-                for col in columns: 
-                    if col not in data: data[col] = [None] * 5 
-                return pd.DataFrame(data)
-            elif table_name == "downtime_logs":
-                data = {
-                    'machine_id': ['M002', 'M004'], 'factory_id': ['F01'] * 2,
-                    'start_time': [datetime.now() - timedelta(hours=x*5) for x in range(1,3)],
-                    'end_time': [datetime.now() - timedelta(hours=x*5-1) for x in range(1,3)],
-                    'fault_code': ['ERR-1024', 'ERR-512'],
-                    'downtime_details': ['Sensor failure on axis X.', 'Overload protection triggered.'],
-                    'duration_minutes': [60, 30]
+            elif table_name == "equipment_data_minute":
+                mock_data = {
+                    'timestamp': [datetime.now() - timedelta(minutes=x) for x in range(num_rows)],
+                    'machine_id': [f'EQP-{x%2}' for x in range(num_rows)], # Cycle through EQP-0, EQP-1
+                    'sensor_id': [f'Sensor{x}' for x in range(num_rows)],
+                    'parameter_name': ['Temperature', 'Pressure'][:num_rows] if num_rows <=2 else ['Temperature'] * num_rows,
+                    'parameter_value': [70.5 + x, 101.2 + x for x in range(num_rows)],
+                    'unit': ['C', 'kPa'][:num_rows] if num_rows <=2 else ['C'] * num_rows
                 }
-                for col in columns:
-                    if col not in data: data[col] = [None] * 2
-                return pd.DataFrame(data)
-            elif table_name == "maintenance_records":
-                data = {
-                    'record_id': [101, 102, 103], 'machine_id': ['M001', 'M003', 'M001'],
-                    'maintenance_date': [datetime.now() - timedelta(days=x*10) for x in range(3)],
-                    'description': ['Annual checkup', 'Filter replacement', 'Software update'],
-                    'technician': ['Tech Alice', 'Tech Bob', 'Tech Alice']
+            elif table_name == "equipment_data_hourly":
+                 mock_data = {
+                    'timestamp': [datetime.now() - timedelta(hours=x) for x in range(num_rows)],
+                    'machine_id': [f'EQP-{x%2}' for x in range(num_rows)],
+                    'kpi_name': ['OEE', 'Availability'][:num_rows] if num_rows <=2 else ['OEE'] * num_rows,
+                    'kpi_value': [85.0 + x, 95.0 - x for x in range(num_rows)],
+                    'quality_score': [99.1 - x for x in range(num_rows)]
                 }
-                for col in columns:
-                    if col not in data: data[col] = [None] * 3
-                return pd.DataFrame(data)
-            return pd.DataFrame()
+            elif table_name == "equipment_data_daily":
+                mock_data = {
+                    'date': [datetime.now().date() - timedelta(days=x) for x in range(num_rows)],
+                    'machine_id': [f'EQP-{x%2}' for x in range(num_rows)],
+                    'avg_oee': [80.0 + x for x in range(num_rows)],
+                    'total_production': [1000 + 50*x for x in range(num_rows)],
+                    'total_downtime_minutes': [30 - 5*x for x in range(num_rows)]
+                }
+            elif table_name == "equipment_status":
+                mock_data = {
+                    'timestamp': [datetime.now() - timedelta(hours=x) for x in range(num_rows)],
+                    'machine_id': [f'EQP-{x%2}' for x in range(num_rows)],
+                    'status_code': ['RUNNING', 'STOPPED'][:num_rows] if num_rows <=2 else ['RUNNING'] * num_rows,
+                    'status_description': ['Machine is running normally.', 'Machine is stopped for maintenance.'][:num_rows] if num_rows <=2 else ['Machine is running normally.'] * num_rows,
+                    'duration_seconds': [3600 - 100*x for x in range(num_rows)]
+                }
+            elif table_name == "equipment_alarm":
+                mock_data = {
+                    'alarm_id': [f'ALM-{1000+i}' for i in range(num_rows)],
+                    'machine_id': [f'EQP-{i%2}' for i in range(num_rows)],
+                    'start_timestamp': [datetime.now() - timedelta(minutes=30+i*10) for i in range(num_rows)],
+                    'end_timestamp': [datetime.now() - timedelta(minutes=10+i*5) for i in range(num_rows)],
+                    'alarm_code': [f'CODE_A{i}' for i in range(num_rows)],
+                    'alarm_description': ['High temperature warning', 'Pressure out of range'][:num_rows] if num_rows <=2 else ['Generic Alarm'] * num_rows,
+                    'severity': [1, 2][:num_rows] if num_rows <=2 else [1] * num_rows
+                }
+            # Add other tables from TABLE_CONFIGS if needed for full mock coverage
+            # For equipment_data_monthly, equipment_data_quarterly, equipment_product_goal - similar simple mocks
+            else: # Default empty if no specific mock
+                log_message(f"[MOCK ETL] No specific mock data for table '{table_name}'. Returning empty DataFrame.")
+                return pd.DataFrame(columns=columns)
+
+            # Ensure all requested columns are present, fill with None if not in mock_data
+            final_mock_data = {}
+            for col in columns:
+                final_mock_data[col] = mock_data.get(col, [None]*num_rows)
+            
+            return pd.DataFrame(final_mock_data)
 
         # Monkey-patch the real function with the mock version for this run
         globals()['fetch_data_from_sql'] = mock_fetch_data_from_sql_etl

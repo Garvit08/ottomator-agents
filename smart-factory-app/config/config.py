@@ -39,6 +39,48 @@ PROMPTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'pr
 PARSE_QUERY_PROMPT_FILE = os.path.join(PROMPTS_DIR, 'parse_query_prompt.txt')
 GENERATE_RESPONSE_PROMPT_FILE = os.path.join(PROMPTS_DIR, 'generate_response_prompt.txt')
 
+# --- ETL Table Configurations ---
+TABLE_CONFIGS = {
+    "equipment": {
+        "columns_to_fetch": ["machine_id", "machine_name", "machine_type", "location", "manufacturer", "install_date"],
+        # No time_window_column typically for master data like this for general ETL, unless fetching newly installed.
+    },
+    "equipment_data_minute": { # Assuming 'equipment_data_minute' was intended
+        "columns_to_fetch": ["timestamp", "machine_id", "sensor_id", "parameter_name", "parameter_value", "unit"],
+        "time_window_column": "timestamp",
+    },
+    "equipment_data_hourly": {
+        "columns_to_fetch": ["timestamp", "machine_id", "kpi_name", "kpi_value", "quality_score"],
+        "time_window_column": "timestamp",
+    },
+    "equipment_data_daily": {
+        "columns_to_fetch": ["date", "machine_id", "avg_oee", "total_production", "total_downtime_minutes"],
+        "time_window_column": "date", # Assuming 'date' column for daily records
+    },
+    "equipment_data_monthly": { # Assuming 'equipment_data_monthly' was intended
+        "columns_to_fetch": ["month_year", "machine_id", "monthly_avg_oee", "monthly_total_production"],
+        "time_window_column": "month_year", # Assuming a column like 'YYYY-MM' or a date representing month start
+    },
+    "equipment_data_quarterly": { # Assuming 'equipment_data_quarterly' was intended
+        "columns_to_fetch": ["quarter_year", "machine_id", "quarterly_avg_oee", "quarterly_total_production"],
+        "time_window_column": "quarter_year",
+    },
+    "equipment_status": {
+        "columns_to_fetch": ["timestamp", "machine_id", "status_code", "status_description", "duration_seconds"],
+        "time_window_column": "timestamp",
+    },
+    "equipment_alarm": {
+        "columns_to_fetch": ["alarm_id", "machine_id", "start_timestamp", "end_timestamp", "alarm_code", "alarm_description", "severity"],
+        "time_window_column": "start_timestamp",
+    },
+    "equipment_product_goal": {
+        "columns_to_fetch": ["goal_id", "machine_id", "product_id", "target_production_rate", "target_quality_rate", "start_date", "end_date"],
+        "time_window_column": "start_date", # Or perhaps filter on active goals (end_date >= today)
+    }
+    # widget_configurations and widget_query are excluded for now as per instructions.
+}
+
+
 if __name__ == "__main__":
     # Print out all config variables to verify
     print(f"DB_USER: {DB_USER}")
@@ -60,3 +102,10 @@ if __name__ == "__main__":
     print(f"PROMPTS_DIR: {PROMPTS_DIR}")
     print(f"PARSE_QUERY_PROMPT_FILE: {PARSE_QUERY_PROMPT_FILE}")
     print(f"GENERATE_RESPONSE_PROMPT_FILE: {GENERATE_RESPONSE_PROMPT_FILE}")
+
+    print("\n--- TABLE_CONFIGS ---")
+    for table, conf in TABLE_CONFIGS.items():
+        print(f"Table: {table}")
+        print(f"  Columns: {conf['columns_to_fetch']}")
+        if 'time_window_column' in conf:
+            print(f"  Time Window Column: {conf['time_window_column']}")

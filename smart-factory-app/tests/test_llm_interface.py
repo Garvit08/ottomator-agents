@@ -111,20 +111,61 @@ class TestLLMInterface(unittest.TestCase):
         self.patcher_ollama_available.start() # Restart class-level patch
 
     def test_parse_query_success(self):
-        """Test successful query parsing."""
-        llm_interface = LLMInterface(use_mock=True) # Forces MockOllama via constructor
+        """Test successful query parsing for a standard query."""
+        llm_interface = LLMInterface(use_mock=True) 
         
-        mock_llm_response_json = {"intent": "fetch_oee", "machine_id": "M001", "timestamp": "today", "parameters": None}
-        # Mock the invoke method of the llm instance (which is MockOllama)
-        llm_interface.llm.invoke = MagicMock(return_value=json.dumps(mock_llm_response_json))
+        # Example: Test OEE query (already handled by MockOllama's default behavior for this string)
+        user_query_oee = "What was the OEE for machine CNC-002 yesterday?"
+        expected_oee_json = {"intent": "fetch_oee", "machine_id": "CNC-002", "timestamp": "yesterday", "parameters": {"oee_threshold": None}}
+        # No need to mock llm.invoke if MockOllama's internal logic for this string is sufficient.
+        # If we want to ensure *our* prompt template is used, we'd mock llm.invoke:
+        llm_interface.llm.invoke = MagicMock(return_value=json.dumps(expected_oee_json))
 
-        user_query = "What is the OEE for M001 today?"
-        expected_prompt = self.mock_parse_query_prompt.format(user_query=user_query)
+        parsed_output_oee = llm_interface.parse_query(user_query_oee)
         
-        parsed_output = llm_interface.parse_query(user_query)
+        expected_prompt_oee = self.mock_parse_query_prompt.format(user_query=user_query_oee)
+        llm_interface.llm.invoke.assert_called_once_with(expected_prompt_oee)
+        self.assertEqual(parsed_output_oee["intent"], "fetch_oee")
+        self.assertEqual(parsed_output_oee["machine_id"], "CNC-002")
 
-        llm_interface.llm.invoke.assert_called_once_with(expected_prompt)
-        self.assertEqual(parsed_output, mock_llm_response_json)
+    def test_parse_query_new_intents(self):
+        """Test query parsing for new intents based on the updated prompt and MockOllama."""
+        llm_interface = LLMInterface(use_mock=True) # This will use MockOllama due to setUp patch
+
+        # Test Case 1: Get Alarms
+        user_query_alarms = "Show all alarms for machine 'CNC-001' yesterday."
+        expected_alarms_json = {"intent": "get_alarms", "machine_id": "CNC-001", "timestamp": "yesterday", "parameters": None}
+        # MockOllama should handle this specific string based on previous updates to it
+        # If not, we mock llm.invoke here:
+        llm_interface.llm.invoke = MagicMock(return_value=json.dumps(expected_alarms_json))
+        parsed_output_alarms = llm_interface.parse_query(user_query_alarms)
+        expected_prompt_alarms = self.mock_parse_query_prompt.format(user_query=user_query_alarms)
+        llm_interface.llm.invoke.assert_called_once_with(expected_prompt_alarms)
+        self.assertEqual(parsed_output_alarms, expected_alarms_json)
+        llm_interface.llm.invoke.reset_mock() # Reset for next call
+
+        # Test Case 2: Get Hourly Data
+        user_query_hourly = "What was the hourly production count for 'Welder-003' on June 15th, 2024?"
+        expected_hourly_json = {"intent": "get_hourly_data", "machine_id": "Welder-003", "timestamp": "2024-06-15", "parameters": {"kpi_name": "production_count"}}
+        llm_interface.llm.invoke = MagicMock(return_value=json.dumps(expected_hourly_json))
+        parsed_output_hourly = llm_interface.parse_query(user_query_hourly)
+        expected_prompt_hourly = self.mock_parse_query_prompt.format(user_query=user_query_hourly)
+        llm_interface.llm.invoke.assert_called_once_with(expected_prompt_hourly)
+        self.assertEqual(parsed_output_hourly, expected_hourly_json)
+        llm_interface.llm.invoke.reset_mock()
+
+        # Test Case 3: Get Equipment Details
+        user_query_details = "What type of machine is EQP-101 and who made it?"
+        # Note: MockOllama was updated to return `null` for timestamp and parameters.
+        # json.dumps will convert Python None to json null.
+        expected_details_json = {"intent": "get_equipment_details", "machine_id": "EQP-101", "timestamp": None, "parameters": None}
+        llm_interface.llm.invoke = MagicMock(return_value=json.dumps(expected_details_json))
+        parsed_output_details = llm_interface.parse_query(user_query_details)
+        expected_prompt_details = self.mock_parse_query_prompt.format(user_query=user_query_details)
+        llm_interface.llm.invoke.assert_called_once_with(expected_prompt_details)
+        self.assertEqual(parsed_output_details, expected_details_json)
+        llm_interface.llm.invoke.reset_mock()
+
 
     def test_parse_query_json_decode_error(self):
         """Test query parsing with a JSONDecodeError from LLM response."""
