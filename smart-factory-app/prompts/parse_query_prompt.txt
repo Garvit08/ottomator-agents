@@ -119,9 +119,6 @@ JSON Output:
     "parameters": null
 }}
 
-User Query: "Fetch temperature for Sensor S1 on machine MTR-5 at 3:45 PM today."
-JSON Output:
-{{
     "intent": "get_minute_data",
     "machine_id": "MTR-5",
     "timestamp": "today at 3:45 PM",
@@ -131,5 +128,11 @@ JSON Output:
     }}
 }}
 
-Now, process the query: "{user_query}"
+---
+Previous conversation history (if any):
+{chat_history}
+---
+
+Based on this history (if provided) and the new user query, extract the intent and entities from the new user query.
+New User Query: "{user_query}"
 JSON Output:

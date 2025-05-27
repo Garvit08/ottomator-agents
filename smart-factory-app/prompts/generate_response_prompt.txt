@@ -2,6 +2,10 @@ Original User Query: "{user_query}"
 
 Please synthesize a comprehensive answer based on the following information. Use factory-specific terminology like OEE, cycle time, downtime, etc., where appropriate.
 
+--- Previous Conversation History ---
+{chat_history}
+---
+
 --- SQL Data ---
 {sql_data}
 
@@ -10,6 +14,9 @@ Please synthesize a comprehensive answer based on the following information. Use
 
 --- Vector Database Search Results (Contextual Documents/Summaries) ---
 {vector_context_str}
+---
+
+User's Current Query: "{user_query}"
 
 --- Synthesized Answer ---
-Based on all the provided information, here is the answer to the user's query:
+Based on all the provided information (including conversation history, data from SQL, KG, and Vector DB, and the user's current query), provide a comprehensive and contextually aware answer:

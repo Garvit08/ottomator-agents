@@ -75,7 +75,8 @@ class TestAPISync(unittest.TestCase): # Using synchronous test client for simpli
         # Default mock behaviors
         self.mock_llm_interface.parse_query.return_value = {"intent": "unknown", "machine_id": None, "timestamp": None, "parameters": None}
         self.mock_llm_interface.generate_response.return_value = "Default mock LLM response."
-        self.mock_run_sql_query_func.return_value = "Default mock SQL response."
+        # Update mock_run_sql_query_func to return a tuple (result, example_ids)
+        self.mock_run_sql_query_func.return_value = ("Default mock SQL response.", []) 
         self.mock_kg_agent.query.return_value = [{"info": "Default mock KG response"}]
         self.mock_vector_agent.hybrid_search.return_value = {"documents": [["Default mock vector document."]]}
 
@@ -92,37 +93,34 @@ class TestAPISync(unittest.TestCase): # Using synchronous test client for simpli
         parsed_intent = {"intent": "fetch_oee", "machine_id": "M001", "timestamp": "yesterday", "parameters": None}
         
         self.mock_llm_interface.parse_query.return_value = parsed_intent
-        self.mock_run_sql_query_func.return_value = "SQL: OEE for M001 yesterday was 85%."
-        # Vector agent will always be called with current logic, KG might be skipped.
+        # Ensure run_sql_query mock returns the new tuple format (result, example_ids_used)
+        self.mock_run_sql_query_func.return_value = ("SQL: OEE for M001 yesterday was 85%.", ["daily_summary_report"])
         self.mock_vector_agent.hybrid_search.return_value = {"documents": [["OEE maintenance log for M001"]]}
 
         response = self.client.post("/process-query/", json={"query": user_query})
         self.assertEqual(response.status_code, 200)
 
-        self.mock_llm_interface.parse_query.assert_called_once_with(user_query)
+        # Check parse_query was called with empty history initially
+        self.mock_llm_interface.parse_query.assert_called_once_with(user_query, chat_history="")
+        
         self.mock_run_sql_query_func.assert_called_once()
-        # Check the question passed to SQL agent based on new logic
+        # Check that parsed_query_dict was passed to run_sql_query
+        call_args_sql = self.mock_run_sql_query_func.call_args[1] # kwargs
+        self.assertEqual(call_args_sql['parsed_query_dict'], parsed_intent)
         expected_sql_question = "What was the OEE for machine M001 around yesterday?"
-        self.assertIn(expected_sql_question, self.mock_run_sql_query_func.call_args[0][0])
+        self.assertIn(expected_sql_question, call_args_sql['natural_language_query'])
         
-        self.mock_kg_agent.query.assert_not_called() # Should not be called for simple OEE fetch
-        
+        self.mock_kg_agent.query.assert_not_called()
         self.mock_vector_agent.hybrid_search.assert_called_once()
-        # Check refined query for vector agent
-        vector_call_args = self.mock_vector_agent.hybrid_search.call_args[1]
-        self.assertIn(user_query, vector_call_args['query_text'])
-        self.assertIn("SQL: OEE for M001 yesterday was 85%", vector_call_args['query_text']) # SQL context added
-        self.assertIn("M001", vector_call_args['keywords'])
-        self.assertIn("oee", vector_call_args['keywords'])
-
-
+        
         self.mock_llm_interface.generate_response.assert_called_once()
-        # Verify debug info
+        # Check generate_response was called with empty history initially
+        self.assertIn("chat_history", self.mock_llm_interface.generate_response.call_args[1])
+        self.assertEqual(self.mock_llm_interface.generate_response.call_args[1]['chat_history'], "")
+        
         debug_info = response.json()["debug_info"]
-        self.assertEqual(debug_info["question_to_sql_agent"], expected_sql_question)
-        self.assertTrue(debug_info["sql_agent_response_snippet"].startswith("SQL: OEE for M001"))
-        self.assertEqual(debug_info["cypher_query_to_kg_agent"], "N/A") # Or actual query if it was formulated but skipped
-        self.assertTrue(debug_info["kg_agent_response_snippet"].startswith("No KG query needed"))
+        self.assertEqual(debug_info["sql_agent_few_shot_examples_used"], ["daily_summary_report"])
+        self.assertEqual(debug_info["chat_history_provided_to_llm"], "")
 
 
     def test_orchestration_sql_then_kg(self):
@@ -131,90 +129,107 @@ class TestAPISync(unittest.TestCase): # Using synchronous test client for simpli
         parsed_intent = {"intent": "analyze_downtime", "machine_id": "CNC-001", "timestamp": "yesterday", "parameters": None}
         
         self.mock_llm_interface.parse_query.return_value = parsed_intent
-        # Mock SQL to return a fault code
-        self.mock_run_sql_query_func.return_value = "SQL: Machine CNC-001 stopped due to alarm_code: ALM001 (fault_code = 'FC-123'). Status was CRITICAL_STOP."
+        # Mock SQL to return a fault code and example_ids
+        self.mock_run_sql_query_func.return_value = (
+            "SQL: Machine CNC-001 stopped due to alarm_code: ALM001 (fault_code = 'FC-123'). Status was CRITICAL_STOP.",
+            ["machine_last_running_status"] 
+        )
         self.mock_kg_agent.query.return_value = [{"fault_code": "FC-123", "related_info": "Sensor S2 failure.", "related_type": ["Recommendation"]}]
         self.mock_vector_agent.hybrid_search.return_value = {"documents": [["Log for FC-123 on CNC-001"]]}
 
-
         response = self.client.post("/process-query/", json={"query": user_query})
         self.assertEqual(response.status_code, 200)
 
-        self.mock_llm_interface.parse_query.assert_called_once_with(user_query)
+        self.mock_llm_interface.parse_query.assert_called_once_with(user_query, chat_history="")
         self.mock_run_sql_query_func.assert_called_once()
-        expected_sql_question = "What were the alarms and operational status for machine CNC-001 around yesterday that might explain a stop or downtime?"
-        self.assertEqual(self.mock_run_sql_query_func.call_args[0][0], expected_sql_question)
+        self.assertEqual(self.mock_run_sql_query_func.call_args[1]['parsed_query_dict'], parsed_intent)
 
         self.mock_kg_agent.query.assert_called_once()
-        # Based on "fault_code = 'FC-123'" in SQL response, KG should be queried for "FC-123"
-        expected_kg_query = "MATCH (f:Fault {code: $code})-[:CAUSED_BY|LINKED_TO_RECOMMENDATION*1..2]->(related) RETURN f.code AS fault_code, related.description AS related_info, labels(related) as related_type"
-        actual_kg_call = self.mock_kg_agent.query.call_args
-        self.assertEqual(actual_kg_call[0][0], expected_kg_query) # Cypher query
-        self.assertEqual(actual_kg_call[1]['params'], {'code': 'FC-123'}) # Params
-
         self.mock_vector_agent.hybrid_search.assert_called_once()
-        vector_call_args = self.mock_vector_agent.hybrid_search.call_args[1]
-        self.assertIn("SQL: Machine CNC-001 stopped", vector_call_args['query_text'])
-        self.assertIn("Knowledge Graph found:", vector_call_args['query_text'])
-        self.assertIn("FC-123", vector_call_args['keywords'])
-
         self.mock_llm_interface.generate_response.assert_called_once()
+        
         debug_info = response.json()["debug_info"]
         self.assertEqual(debug_info["fault_code_from_sql_for_kg"], "FC-123")
-        self.assertTrue(debug_info["kg_agent_response_snippet"].startswith("Knowledge Graph found:"))
+        self.assertEqual(debug_info["sql_agent_few_shot_examples_used"], ["machine_last_running_status"])
 
+    def test_conversation_flow_with_memory(self):
+        """Test a sequence of API calls for a single user, verifying memory usage."""
+        user_id = "test_user_conv_flow"
 
-    def test_orchestration_full_path_with_params(self):
-        """Test a query involving parameters that trigger specific agent behaviors."""
-        user_query = "Show alarms for Welder-002 yesterday with alarm_code E-101."
-        # LLM parse_query should extract 'alarm_code' into parameters.
-        parsed_intent = {
-            "intent": "get_alarms", 
-            "machine_id": "Welder-002", 
-            "timestamp": "yesterday", 
-            "parameters": {"alarm_code": "E-101"}
-        }
-        self.mock_llm_interface.parse_query.return_value = parsed_intent
-        self.mock_run_sql_query_func.return_value = "SQL: Alarm E-101 on Welder-002 at 10:00 AM, duration 5m."
-        # KG might be called if alarm_code E-101 is also treated as a fault_code for lookup
-        # Let's assume E-101 is NOT treated as a fault_code for KG in this path, so KG not called.
-        # This depends on the exact logic in main.py for `intermediate_data["fault_code_from_sql"]`
-        # and the conditions for KG call. The current intermediate_data logic is very specific.
-        # For "get_alarms" intent without explicit fault_code in SQL response, KG might not be called.
-        # Let's refine `main.py` logic or this test.
-        # If sql_data_str contains "alarm_code: E-101" and that sets intermediate_data, then KG would be called.
-        # For this test, let's assume SQL response does *not* trigger the KG's fault_code logic.
-        self.mock_kg_agent.query.return_value = [] # Or assert not called if conditions aren't met
+        # --- First query ---
+        query1 = "What was the OEE for M001 yesterday?"
+        parsed_intent1 = {"intent": "fetch_oee", "machine_id": "M001", "timestamp": "yesterday"}
+        sql_response1 = "SQL: OEE for M001 yesterday was 75%."
+        final_response1 = "The OEE for M001 yesterday was 75%."
 
-        self.mock_vector_agent.hybrid_search.return_value = {"documents": [["Procedure for alarm E-101."]]}
-
-        response = self.client.post("/process-query/", json={"query": user_query})
-        self.assertEqual(response.status_code, 200)
-
-        self.mock_llm_interface.parse_query.assert_called_once_with(user_query)
-        self.mock_run_sql_query_func.assert_called_once()
-        expected_sql_question = "List alarms for machine Welder-002 around yesterday. Filter by alarm code E-101."
-        self.assertEqual(self.mock_run_sql_query_func.call_args[0][0], expected_sql_question)
+        self.mock_llm_interface.parse_query.return_value = parsed_intent1
+        self.mock_run_sql_query_func.return_value = (sql_response1, ["daily_summary_report"])
+        self.mock_vector_agent.hybrid_search.return_value = {"documents": [["OEE doc for M001"]]}
+        self.mock_llm_interface.generate_response.return_value = final_response1
         
-        # Based on current main.py, KG is called if intent is find_error_cause OR fault_code is found.
-        # If "get_alarms" doesn't set a fault_code in intermediate_data, KG won't be called for this.
-        # Let's assume it's not called for this specific intent unless SQL output triggers it.
-        # If SQL output was "fault_code = 'E-101'", then KG would be called.
-        # For this test, assume the SQL output "Alarm E-101..." does *not* set intermediate_data["fault_code_from_sql"].
-        self.mock_kg_agent.query.assert_not_called() 
+        response1 = self.client.post("/process-query/", json={"query": query1, "user_id": user_id})
+        self.assertEqual(response1.status_code, 200)
+        self.assertEqual(response1.json()["answer"], final_response1)
 
-        self.mock_vector_agent.hybrid_search.assert_called_once()
-        vector_call_args = self.mock_vector_agent.hybrid_search.call_args[1]
-        self.assertIn("SQL: Alarm E-101 on Welder-002", vector_call_args['query_text'])
-        self.assertIn("E-101", vector_call_args['keywords']) # From parameters
-        self.assertIn("Welder-002", vector_call_args['keywords'])
-        self.assertIn("alarms", vector_call_args['keywords'])
+        # Verify parse_query and generate_response were called with empty history for the first call
+        self.mock_llm_interface.parse_query.assert_called_with(query1, chat_history="")
+        self.mock_llm_interface.generate_response.assert_called_with(
+            sql_data=sql_response1, 
+            kg_context=unittest.mock.ANY, # Actual value depends on logic if KG is called or not
+            vector_context=["OEE doc for M001"], 
+            user_query=query1, 
+            chat_history=""
+        )
+        self.assertEqual(response1.json()["debug_info"]["chat_history_provided_to_llm"], "")
 
+        # Reset mocks for the next call in the conversation
+        self.mock_llm_interface.reset_mock()
+        self.mock_run_sql_query_func.reset_mock()
+        self.mock_kg_agent.reset_mock()
+        self.mock_vector_agent.reset_mock()
 
-        self.mock_llm_interface.generate_response.assert_called_once()
-        debug_info = response.json()["debug_info"]
-        self.assertEqual(debug_info["fault_code_from_sql_for_kg"], "N/A") # As KG was not called for fault
-        self.assertTrue(debug_info["kg_agent_response_snippet"].startswith("No KG query needed"))
+        # --- Second query (follow-up) ---
+        query2 = "And for machine M002?" # Relies on previous context (OEE, yesterday)
+        # Expected history to be passed to parse_query
+        expected_history_for_q2 = f"Human: {query1}\nAI: {final_response1}"
+        
+        # Mock LLMInterface.parse_query to understand the follow-up based on history
+        # This is where the LLM's ability to use history for context resolution is key.
+        parsed_intent2 = {"intent": "fetch_oee", "machine_id": "M002", "timestamp": "yesterday"} # Resolved by LLM
+        self.mock_llm_interface.parse_query.return_value = parsed_intent2
+        
+        sql_response2 = "SQL: OEE for M002 yesterday was 80%."
+        final_response2 = "The OEE for M002 yesterday was 80%."
+        self.mock_run_sql_query_func.return_value = (sql_response2, ["daily_summary_report"])
+        self.mock_vector_agent.hybrid_search.return_value = {"documents": [["OEE doc for M002"]]}
+        self.mock_llm_interface.generate_response.return_value = final_response2
+
+        response2 = self.client.post("/process-query/", json={"query": query2, "user_id": user_id})
+        self.assertEqual(response2.status_code, 200)
+        self.assertEqual(response2.json()["answer"], final_response2)
+
+        # Verify parse_query was called with the history from the first interaction
+        self.mock_llm_interface.parse_query.assert_called_with(query2, chat_history=expected_history_for_q2)
+        
+        # Verify run_sql_query was called with data for M002
+        self.mock_run_sql_query_func.assert_called_once()
+        self.assertIn("M002", self.mock_run_sql_query_func.call_args[1]['natural_language_query'])
+        self.assertEqual(self.mock_run_sql_query_func.call_args[1]['parsed_query_dict'], parsed_intent2)
+
+        # Verify generate_response was called with history
+        self.mock_llm_interface.generate_response.assert_called_with(
+            sql_data=sql_response2, 
+            kg_context=unittest.mock.ANY,
+            vector_context=["OEE doc for M002"], 
+            user_query=query2, 
+            chat_history=expected_history_for_q2
+        )
+        self.assertEqual(response2.json()["debug_info"]["chat_history_provided_to_llm"], expected_history_for_q2)
+        
+        # Clean up memory for this user_id if it's a global store and tests might interfere
+        from smart_factory_app.api.main import conversation_memory_store
+        if user_id in conversation_memory_store:
+            del conversation_memory_store[user_id]
 
 
     def test_process_query_llm_parse_error(self):

@@ -6,8 +6,9 @@ from langchain_community.utilities import SQLDatabase
 from langchain_openai import OpenAI # Placeholder LLM
 from langchain.agents import create_sql_agent
 from langchain.agents.agent_types import AgentType
+from typing import Optional, Dict, Any # For type hinting
 
-# Adjust path to import config if necessary, assuming this script might be run directly
+# Adjust path to import config and utils if necessary
 # For package execution, this might not be needed if PYTHONPATH is set correctly
 # or the calling script handles paths.
 current_dir_sql_agent = os.path.dirname(os.path.abspath(__file__))
@@ -34,8 +35,9 @@ try:
     # For now, we keep OpenAI() as it was, but acknowledge this discrepancy.
     # Ideal: llm_choice = config.SQL_AGENT_LLM_TYPE; if llm_choice == "openai": llm = OpenAI(...) etc.
     # For this refactor, we focus on DATABASE_URI. LLM part is more complex.
+    from smart_factory_app.agents.sql_agent_utils import get_relevant_sql_examples # Added import
 except ImportError:
-    print("Error importing config. Ensure PYTHONPATH is set or paths are correct.")
+    print("Error importing config or sql_agent_utils. Ensure PYTHONPATH is set or paths are correct.")
     # Fallback for DATABASE_URI if config import fails (not ideal for production)
     DB_HOST_FALLBACK = os.getenv("DB_HOST", "localhost")
     DB_PORT_FALLBACK = os.getenv("DB_PORT", "5432")
@@ -94,23 +96,67 @@ except Exception as e:
     # Optionally, re-raise the exception or handle it as appropriate
     # raise
 
-def run_sql_query(query_text: str):
+def run_sql_query(natural_language_query: str, parsed_query_dict: Optional[Dict[str, Any]] = None) -> tuple[str, list[str]]:
     """
-    Runs a SQL query using the SQL agent.
+    Runs a natural language query against the SQL database using the SQL agent,
+    optionally prepending few-shot examples if parsed_query_dict is provided.
+
+    Returns:
+        A tuple containing:
+        - The SQL agent's result string.
+        - A list of IDs/names of the few-shot examples used (empty if none).
     """
     if not agent_executor:
-        return "SQL Agent not initialized. Cannot run query."
-    if not llm:
-        return "LLM not initialized. Cannot run query."
+        return "SQL Agent (agent_executor) not initialized. Cannot run query.", []
+    if not llm: # llm is the OpenAI placeholder instance for the agent
+        return "LLM for SQL Agent not initialized. Cannot run query.", []
+
+    augmented_query = natural_language_query
+    few_shot_examples_str = ""
+    selected_example_info: list[str] = [] # To store IDs/names of used examples
+
+    if parsed_query_dict:
+        try:
+            relevant_examples, suggested_tables = get_relevant_sql_examples(parsed_query_dict, max_examples=2)
+            
+            if relevant_examples:
+                example_prompts = ["Here are some examples of how a user question maps to an SQL query:"]
+                for ex in relevant_examples:
+                    nl_equiv = ex.get("natural_language_equivalent", 
+                                      ex.get("description", f"Example for intent: {ex.get('expected_intent')}"))
+                    example_prompts.append(f"---\nUser Question: {nl_equiv}\nSQL Query:\n{ex['query_template']}\n---")
+                    selected_example_info.append(ex.get('id', ex.get('name', 'Unknown Example')))
+                few_shot_examples_str = "\n".join(example_prompts)
+                print(f"Selected {len(selected_example_info)} few-shot SQL examples: {selected_example_info}")
+            else:
+                print("No relevant few-shot SQL examples found for the parsed query.")
+
+            table_hint_str = ""
+            if suggested_tables:
+                table_hint_str = f"Hint: For the following question, consider using tables such as: {', '.join(sorted(list(suggested_tables)))}.\n"
+
+            if few_shot_examples_str or table_hint_str:
+                augmented_query = (
+                    f"{few_shot_examples_str}\n\n"
+                    f"{table_hint_str}" # table_hint_str includes \n if not empty
+                    f"Based on these examples and the database schema, please answer the following question by generating and executing SQL:\n"
+                    f"{natural_language_query}"
+                )
+                print(f"--- Augmented SQL query with few-shot examples and table hints for agent ---\n{augmented_query}\n---------------------------------------------------------")
+            # If no examples and no table hints, augmented_query remains natural_language_query (already set as default)
+
+        except Exception as e:
+            print(f"Error retrieving or formatting SQL few-shot examples/hints: {e}")
+            # Proceed with the original query if example/hint generation fails
 
     try:
-        # For Langchain versions that expect a dictionary input:
-        # result = agent_executor.run({"input": query_text})
-        # For Langchain versions that expect a direct string input for `run`:
-        result = agent_executor.run(query_text)
-        return result
+        # The agent_executor.run method takes the final query string.
+        print(f"Sending to SQL Agent: {augmented_query[:500]}...") # Log snippet of what's sent
+        result = agent_executor.run(augmented_query) 
+        return str(result), selected_example_info
     except Exception as e:
-        return f"Error running query: {e}"
+        print(f"Error running query with SQL Agent: {e}")
+        return f"Error running SQL query: {e}", selected_example_info
 
 # Example Usage (optional, can be commented out or moved to a main script)
 if __name__ == "__main__":
@@ -123,17 +169,67 @@ if __name__ == "__main__":
         # This requires a running PostgreSQL database specified by DATABASE_URI
         # and OPENAI_API_KEY for the llm to function.
         
-        # Test query:
-        test_query = "List all tables in the public schema." # More natural language for agent
-        # Or a direct SQL if the agent is bypassed:
-        # test_query_sql = "SELECT table_name FROM information_schema.tables WHERE table_schema='public';"
-
-        print(f"\nAttempting to run query via SQL Agent: \"{test_query}\"")
-        if llm: # Check if LLM was initialized
-            query_result = run_sql_query(test_query)
-            print(f"\nAgent Query Result:\n{query_result}")
+        # Test query 1 (without parsed_query_dict):
+        test_query_1 = "List all tables in the public schema."
+        print(f"\nAttempting to run query 1 (no few-shot) via SQL Agent: \"{test_query_1}\"")
+        if llm:
+            query_result_1, examples_used_1 = run_sql_query(test_query_1)
+            print(f"\nAgent Query Result 1:\n{query_result_1}")
+            print(f"Examples used for Query 1: {examples_used_1}")
         else:
-            print("Cannot run query via agent as LLM is not initialized (OPENAI_API_KEY likely missing).")
+            print("Cannot run query 1 via agent as LLM is not initialized (OPENAI_API_KEY likely missing).")
+
+        # Test query 2 (with parsed_query_dict to trigger few-shot examples)
+        # This requires SQL_QUERY_EXAMPLES to be populated and accessible,
+        # and each example to have 'natural_language_equivalent', 'query_template', etc.
+        # Also, the get_relevant_sql_examples function needs to work correctly.
+        print("\n--- Testing with Few-Shot Examples ---")
+        # Example: Simulating a parsed query that should match 'daily_summary_report'
+        # from sql_query_examples.py
+        mock_parsed_query_for_daily_summary = {
+            "intent": "get_daily_summary",
+            "machine_id": "CNC-001", # This would be extracted by LLMInterface
+            "timestamp": "yesterday", # This would be extracted
+            "parameters": { 
+                "equipment_id": "CNC-001", # These might be filled by API layer or LLM
+                "start_date": "2023-01-10", 
+                "end_date": "2023-01-10",
+                "shift_id": "SHIFT_A" 
+            }
+        }
+        # A natural language query that would correspond to this parsed dict
+        test_query_2_nl = "Get the daily summary report for CNC-001 for yesterday's shift A (Jan 10, 2023)."
+        
+        print(f"\nAttempting to run query 2 (with few-shot) via SQL Agent: \"{test_query_2_nl}\"")
+        if llm:
+            # Call run_sql_query with the parsed dictionary
+            query_result_2, examples_used_2 = run_sql_query(test_query_2_nl, parsed_query_dict=mock_parsed_query_for_daily_summary)
+            print(f"\nAgent Query Result 2 (Few-Shot):\n{query_result_2}")
+            print(f"Examples used for Query 2: {examples_used_2}")
+        else:
+            print("Cannot run query 2 via agent as LLM is not initialized.")
+            
+        # Example for machine speed (assuming 'machine_speed' example exists)
+        mock_parsed_query_for_speed = {
+            "intent": "get_machine_speed",
+            "machine_id": "PRESS-002",
+            "parameters": {
+                "equipment_id": "PRESS-002", 
+                "start_date": "2023-11-15", # Example date
+                "zoned_current_time": "2023-11-15T14:30:00Z" # Example time
+            }
+        }
+        test_query_3_nl = "What is the current speed of machine PRESS-002 on Nov 15, 2023 around 2:30 PM?"
+        print(f"\nAttempting to run query 3 (with few-shot) via SQL Agent: \"{test_query_3_nl}\"")
+        if llm:
+            query_result_3, examples_used_3 = run_sql_query(test_query_3_nl, parsed_query_dict=mock_parsed_query_for_speed)
+            print(f"\nAgent Query Result 3 (Few-Shot):\n{query_result_3}")
+            print(f"Examples used for Query 3: {examples_used_3}")
+        else:
+            print("Cannot run query 3 via agent as LLM is not initialized.")
+
+    elif not llm:
+        print("SQL Agent could not be initialized because its LLM (OpenAI) is missing (OPENAI_API_KEY likely not set).")
             print("You can test the database connection directly if needed.")
 
     elif not llm:

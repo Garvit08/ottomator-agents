@@ -163,7 +163,9 @@ class MockOllama:
 class LLMInterface:
     def __init__(self, model_name: str = OLLAMA_MODEL, 
                  base_url: Optional[str] = OLLAMA_BASE_URL, 
-                 use_mock: bool = not OLLAMA_AVAILABLE):
+                 use_mock: bool = not OLLAMA_AVAILABLE,
+                 # chat_history is not directly used in __init__ but for consistency if methods need it
+                 ):
         
         self.model_name = model_name
         self.base_url = base_url
@@ -175,8 +177,13 @@ class LLMInterface:
 
         if not self.parse_query_prompt_template or not self.generate_response_prompt_template:
             print("LLMInterface: Critical error - prompt templates could not be loaded. Mocking or LLM calls will likely fail.")
-            # Potentially force mock usage or raise an error if prompts are essential
             self.use_mock = True # Force mock if prompts are missing
+            # Provide very basic default templates if files are missing, to prevent crashes when .format() is called
+            if not self.parse_query_prompt_template:
+                self.parse_query_prompt_template = "New User Query: \"{user_query}\"\nChat History:\n{chat_history}\nJSON Output:"
+            if not self.generate_response_prompt_template:
+                self.generate_response_prompt_template = "User Query: {user_query}\nChat History:\n{chat_history}\nSQL: {sql_data}\nKG: {kg_context}\nVector: {vector_context_str}\nAnswer:"
+
 
         if self.use_mock or not OLLAMA_AVAILABLE:
             print(f"LLMInterface: Using MockOllama. (Ollama available: {OLLAMA_AVAILABLE}, use_mock flag: {self.use_mock}, Prompts loaded: {bool(self.parse_query_prompt_template and self.generate_response_prompt_template)})")
@@ -195,9 +202,10 @@ class LLMInterface:
                 self.llm = MockOllama(model=self.model_name, base_url=self.base_url)
                 self.use_mock = True # Ensure use_mock reflects fallback
 
-    def parse_query(self, user_query: str) -> Dict[str, Any]:
+    def parse_query(self, user_query: str, chat_history: str = "") -> Dict[str, Any]:
         """
-        Parses the user query to extract intent, machine_id, and timestamp using the LLM.
+        Parses the user query to extract intent, machine_id, and timestamp using the LLM,
+        optionally considering chat history.
         Output format is expected to be JSON.
         """
         parsed_info = {"intent": "unknown", "machine_id": None, "timestamp": None, "parameters": None}
@@ -206,8 +214,14 @@ class LLMInterface:
             print("LLMInterface: Parse query prompt template not loaded. Cannot process query.")
             return parsed_info
         
-        prompt = self.parse_query_prompt_template.format(user_query=user_query)
-        
+        try:
+            prompt = self.parse_query_prompt_template.format(user_query=user_query, chat_history=chat_history if chat_history else "No history available.")
+        except KeyError as e:
+            print(f"LLMInterface: Error formatting parse_query_prompt. Missing key: {e}. Using basic prompt.")
+            # Fallback to a simpler prompt if keys are missing (e.g. if template was not loaded and basic default is used)
+            prompt = f"New User Query: \"{user_query}\"\nChat History:\n{chat_history if chat_history else 'No history available.'}\nJSON Output:"
+
+
         try:
             response = self.llm.invoke(prompt)
             
@@ -249,9 +263,9 @@ class LLMInterface:
 
 
     def generate_response(self, sql_data: Optional[str], kg_context: Optional[str], 
-                          vector_context: Optional[List[str]], user_query: str) -> str:
+                          vector_context: Optional[List[str]], user_query: str, chat_history: str = "") -> str:
         """
-        Generates a human-readable response using the LLM based on provided contexts.
+        Generates a human-readable response using the LLM based on provided contexts and chat history.
         """
         if not self.generate_response_prompt_template:
             print("LLMInterface: Generate response prompt template not loaded. Cannot generate response.")
@@ -259,13 +273,20 @@ class LLMInterface:
 
         vector_context_str = "\n".join([f"Document {i+1}: {item}" for i, item in enumerate(vector_context)]) if vector_context else "N/A"
         
-        full_prompt = self.generate_response_prompt_template.format(
-            user_query=user_query,
-            sql_data=sql_data if sql_data else "N/A",
-            kg_context=kg_context if kg_context else "N/A",
-            vector_context_str=vector_context_str
-        )
-        
+        try:
+            full_prompt = self.generate_response_prompt_template.format(
+                user_query=user_query,
+                sql_data=sql_data if sql_data else "N/A",
+                kg_context=kg_context if kg_context else "N/A",
+                vector_context_str=vector_context_str,
+                chat_history=chat_history if chat_history else "No history available."
+            )
+        except KeyError as e:
+            print(f"LLMInterface: Error formatting generate_response_prompt. Missing key: {e}. Using basic prompt.")
+            full_prompt = (f"User Query: {user_query}\nChat History:\n{chat_history if chat_history else 'No history available.'}\n"
+                           f"SQL: {sql_data if sql_data else 'N/A'}\nKG: {kg_context if kg_context else 'N/A'}\n"
+                           f"Vector: {vector_context_str}\nAnswer:")
+
         try:
             llm_response = self.llm.invoke(full_prompt)
             return llm_response
@@ -299,13 +320,13 @@ if __name__ == "__main__":
         print("\n--- Testing Query Parsing (with loaded prompt) ---")
         # Test Case 1: OEE Query
         query1 = "What was the OEE for machine CNC-002 yesterday?"
-        parsed_query1 = llm_interface.parse_query(query1)
+        parsed_query1 = llm_interface.parse_query(query1, chat_history="Human: Any issues with CNC machines?\nAI: CNC-002 had a brief stop.")
         print(f"User Query 1: {query1}")
         print(f"Parsed Output 1: {json.dumps(parsed_query1, indent=2)}")
 
         # Test Case 2: Downtime Query with Time Range
         query2 = "Show me the downtime for machine OP-10 last week."
-        parsed_query2 = llm_interface.parse_query(query2)
+        parsed_query2 = llm_interface.parse_query(query2) # No history
         print(f"\nUser Query 2: {query2}")
         print(f"Parsed Output 2: {json.dumps(parsed_query2, indent=2)}")
 

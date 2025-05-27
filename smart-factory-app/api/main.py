@@ -5,6 +5,13 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import uvicorn
 
+import json # Already present, just noting for context
+from fastapi import FastAPI, HTTPException # Already present
+from pydantic import BaseModel # Already present
+import uvicorn # Already present
+from langchain.memory import ConversationBufferWindowMemory # Added for chat history
+from typing import Optional # For Pydantic optional fields
+
 # --- Path Adjustments ---
 # Ensure 'smart_factory_app' and its submodules can be found.
 # If this script (main.py) is in smart-factory-app/api/,
@@ -120,11 +127,32 @@ else:
         # This would be an unexpected runtime error during init of correctly imported modules.
         raise RuntimeError(f"Failed to initialize agents: {e}") from e
 
+# --- Initialize Conversation Memory ---
+# Global for this example; in a real app, this might be session-based or user-specific.
+# For `ConversationBufferWindowMemory`:
+# `memory_key` is where the history string will be stored when `load_memory_variables` is called.
+# `input_key` and `ai_prefix/human_prefix` define how `save_context` formats and stores interactions.
+# Let's use standard "input" for user's turn and "output" for AI's turn for save_context.
+# The history will be formatted with "Human:" and "AI:" prefixes by default.
+conversation_memory_store: Dict[str, ConversationBufferWindowMemory] = {} # User-specific memory
+
+def get_user_memory(user_id: str) -> ConversationBufferWindowMemory:
+    if user_id not in conversation_memory_store:
+        conversation_memory_store[user_id] = ConversationBufferWindowMemory(
+            k=3, # Remember last 3 interactions
+            memory_key="history", # Key for the formatted history string when loading
+            input_key="input",    # Key for user's query for saving context
+            output_key="output",  # Key for AI's response for saving context
+            return_messages=False # Return history as a single string
+        )
+    return conversation_memory_store[user_id]
+
 
 # --- Pydantic Models ---
 class UserQuery(BaseModel):
     query: str
-    user_id: str = "default_user" # Optional: for future use like personalization
+    user_id: str = "default_user" 
+    # session_id: Optional[str] = None # Can be added for more robust session management
 
 class QueryResponse(BaseModel):
     answer: str
@@ -146,11 +174,21 @@ async def process_query_endpoint(user_query: UserQuery):
     Processes a user's natural language query about factory operations.
     """
     original_query = user_query.query
-    print(f"\nReceived query: '{original_query}' from user: '{user_query.user_id}'")
+    user_id = user_query.user_id # Use user_id for memory key
+    print(f"\nReceived query: '{original_query}' from user: '{user_id}'")
 
     try:
-        # 1. Parse Query using LLMInterface
-        parsed_query_data = llm_interface.parse_query(original_query)
+        # 1. Load Conversation History for the user
+        user_memory = get_user_memory(user_id)
+        # `load_memory_variables` takes an empty dict if the memory doesn't require specific inputs to load.
+        loaded_memory_vars = user_memory.load_memory_variables({}) 
+        chat_history_str = loaded_memory_vars.get(user_memory.memory_key, "") # Default to empty string
+        
+        log_message(f"Loaded chat history for user '{user_id}':\n{chat_history_str if chat_history_str else 'No history available.'}")
+
+        # 2. Parse Query using LLMInterface, now with chat history
+        # LLMInterface methods were updated in the previous step to accept chat_history
+        parsed_query_data = llm_interface.parse_query(original_query, chat_history=chat_history_str)
         intent = parsed_query_data.get("intent", "unknown")
         machine_id = parsed_query_data.get("machine_id")
         timestamp_info = parsed_query_data.get("timestamp") or parsed_query_data.get("timestamp_range")
@@ -205,10 +243,17 @@ async def process_query_endpoint(user_query: UserQuery):
 
             if question_for_sql_agent != "N/A": # Check if a question was actually formulated
                 log_message(f"Constructed question for SQL Agent: {question_for_sql_agent}")
+                sql_examples_used_info = [] # Initialize here
                 try:
-                    sql_data_result = run_sql_query(question_for_sql_agent)
+                    # Pass parsed_query_data for few-shot example selection in sql_agent
+                    sql_data_result, sql_examples_used_info = run_sql_query(
+                        natural_language_query=question_for_sql_agent,
+                        parsed_query_dict=parsed_query_data 
+                    )
                     sql_data_str = str(sql_data_result) if sql_data_result else "No specific data found from SQL for this query."
-                    log_message(f"SQL Agent Result: {sql_data_str[:300]}...") 
+                    log_message(f"SQL Agent Result: {sql_data_str[:300]}...")
+                    if sql_examples_used_info:
+                        log_message(f"SQL Agent used few-shot examples: {sql_examples_used_info}")
                     
                     # --- Simple example of extracting info from SQL for conditional KG call ---
                     # This is a placeholder for actual parsing of sql_data_str.
@@ -314,22 +359,37 @@ async def process_query_endpoint(user_query: UserQuery):
             vector_results_docs = ["Mock Vector DB: Found past issue log for FC-123 on CNC-001 (API mock)."]
 
 
-        # 3. Generate Response using LLMInterface
+        # 4. Generate Response using LLMInterface, now with chat history
         final_response_text = llm_interface.generate_response(
             sql_data=sql_data_str,
             kg_context=kg_context_str,
             vector_context=vector_results_docs,
-            user_query=original_query
+            user_query=original_query,
+            chat_history=chat_history_str
         )
 
-        # 4. Return Response
+        # 5. Save context to memory
+        # Use the keys specified in ConversationBufferWindowMemory constructor (input_key, output_key)
+        user_memory.save_context(
+            {user_memory.input_key: original_query}, 
+            {user_memory.output_key: final_response_text}
+        )
+        log_message(f"Saved context for user '{user_id}'.")
+        # For debugging, print current memory content:
+        # current_history_debug = user_memory.load_memory_variables({})[user_memory.memory_key]
+        # log_message(f"Current history for user '{user_id}':\n{current_history_debug}")
+
+
+        # 6. Return Response
         return QueryResponse(
             answer=final_response_text,
             parsed_intent=parsed_query_data,
             debug_info={
                 "original_query": original_query,
+                "chat_history_provided_to_llm": chat_history_str[:1000] + "..." if len(chat_history_str) > 1000 else chat_history_str,
                 # Inputs to Agents
                 "question_to_sql_agent": question_for_sql_agent,
+                "sql_agent_few_shot_examples_used": sql_examples_used_info if 'sql_examples_used_info' in locals() else "N/A (SQL agent not called or error)",
                 "cypher_query_to_kg_agent": cypher_query_for_kg,
                 "params_for_kg_agent": query_params if 'query_params' in locals() and cypher_query_for_kg != "N/A" else "N/A",
                 "refined_query_to_vector_agent": search_query_for_vector_db[:500] + "..." if len(search_query_for_vector_db) > 500 else search_query_for_vector_db,
@@ -337,7 +397,7 @@ async def process_query_endpoint(user_query: UserQuery):
                 # Outputs from Agents (or error/default messages)
                 "sql_agent_response_snippet": sql_data_str[:1000] + "..." if len(sql_data_str) > 1000 else sql_data_str,
                 "kg_agent_response_snippet": kg_context_str[:1000] + "..." if len(kg_context_str) > 1000 else kg_context_str,
-                "vector_agent_response_docs": vector_results_docs, # Already a list of docs, usually snippets
+                "vector_agent_response_docs": vector_results_docs, 
                 # Intermediate data for context
                 "fault_code_from_sql_for_kg": intermediate_data.get("fault_code_from_sql", "N/A"),
                 # Status Flags
