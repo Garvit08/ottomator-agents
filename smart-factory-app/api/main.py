@@ -13,18 +13,6 @@ import uvicorn # Already present
 from langchain.memory import ConversationBufferWindowMemory # Added for chat history
 from typing import Optional, Dict # For Pydantic optional fields and Dict type hint
 
-# --- Path Adjustments ---
-# Ensure 'smart_factory_app' and its submodules can be found.
-# If this script (main.py) is in smart-factory-app/api/,
-# and other modules are in smart-factory-app/agents, smart-factory-app/config
-# then we need to add the parent of 'smart_factory_app' to sys.path for `from smart_factory_app...` imports.
-current_api_dir = os.path.dirname(os.path.abspath(__file__)) # .../api
-smart_factory_app_root = os.path.abspath(os.path.join(current_api_dir, '..')) # .../smart-factory-app
-project_root_dir = os.path.abspath(os.path.join(smart_factory_app_root, '..')) # Parent of smart_factory_app
-
-if project_root_dir not in sys.path:
-    sys.path.insert(0, project_root_dir) # Allows `from smart_factory_app.config import ...`
-
 # --- Agent and Config Imports ---
 try:
     from smart_factory_app.agents.llm_interface import LLMInterface

@@ -5,18 +5,6 @@ import pandas as pd
 from sqlalchemy import create_engine, text as sql_text
 from datetime import datetime, timedelta
 
-# --- Path Adjustments for Imports ---
-# Assuming script is in smart-factory-app/data_pipelines/
-# Add parent of 'smart_factory_app' to sys.path to allow `from smart_factory_app. ...`
-current_dir_etl = os.path.dirname(os.path.abspath(__file__))
-# smart_factory_app_dir is .../smart-factory-app
-smart_factory_app_dir_etl = os.path.abspath(os.path.join(current_dir_etl, '..'))
-# project_root_etl is the parent of .../smart-factory-app (e.g., /app)
-project_root_etl = os.path.abspath(os.path.join(smart_factory_app_dir_etl, '..'))
-
-if project_root_etl not in sys.path:
-    sys.path.insert(0, project_root_etl)
-
 # --- Import VectorAgent and Configuration ---
 try:
     from smart_factory_app.agents.vector_agent import VectorAgent

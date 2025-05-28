@@ -16,15 +16,6 @@ except ImportError:
     OLLAMA_AVAILABLE = False
     # print("Ollama or ChatOllama not found. Using MockOllama for LLM interactions.")
 
-
-# Path adjustments for config import
-current_dir_llm_interface = os.path.dirname(os.path.abspath(__file__)) # .../agents
-smart_factory_app_dir_llm = os.path.abspath(os.path.join(current_dir_llm_interface, '..')) # .../smart-factory-app
-project_root_llm_interface = os.path.abspath(os.path.join(smart_factory_app_dir_llm, '..')) # parent of smart-factory-app
-
-if project_root_llm_interface not in sys.path:
-    sys.path.insert(0, project_root_llm_interface) # Allows `from smart_factory_app.config...`
-
 try:
     from smart_factory_app.config.config import (
         OLLAMA_MODEL, 

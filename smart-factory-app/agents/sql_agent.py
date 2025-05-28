@@ -9,20 +9,6 @@ from langchain.agents import create_sql_agent
 from langchain.agents.agent_types import AgentType
 from typing import Optional, Dict, Any # For type hinting
 
-# Adjust path to import config and utils if necessary
-# For package execution, this might not be needed if PYTHONPATH is set correctly
-# or the calling script handles paths.
-current_dir_sql_agent = os.path.dirname(os.path.abspath(__file__))
-project_root_sql_agent = os.path.abspath(os.path.join(current_dir_sql_agent, '..', '..')) 
-# Example: /app/smart-factory-app if script is in /app/smart-factory-app/agents
-# Add project_root_sql_agent to sys.path if smart_factory_app is the top-level package
-# If smart_factory_app is in /app, then add /app to sys.path
-# Let's assume 'smart_factory_app' is the package name, and its parent should be in path
-# For direct script run:
-if project_root_sql_agent not in sys.path:
-    # This makes `from smart_factory_app.config...` work
-    sys.path.insert(0, project_root_sql_agent) 
-
 try:
     from smart_factory_app.config.config import DATABASE_URI, OLLAMA_MODEL, OLLAMA_BASE_URL # Using Ollama for consistency, though OpenAI was placeholder
     # Note: The original SQL agent used OpenAI. We'll switch to Ollama for consistency with llm_interface
