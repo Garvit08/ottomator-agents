@@ -1,0 +1,11 @@
+FastAPI
+Uvicorn
+LangChain
+langchain_community
+langchain_openai
+SQLAlchemy
+psycopg2-binary
+neo4j
+chromadb
+sentence-transformers
+pandas

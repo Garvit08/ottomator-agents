@@ -361,4 +361,15 @@ This text file provides the template for the prompt sent to the LLM to synthesiz
     *   `{vector_context_str}`: Contextual documents/summaries retrieved from the Vector Database by the Vector Agent.
 *   **Content**: Instructs the LLM to synthesize a comprehensive answer, use factory-specific terminology where appropriate, and base its response on all provided information sections.
 
-## Future Enhancements (Optional)
+## Future Enhancements
+
+- Implement data population for the Neo4j Knowledge Graph.
+- Develop a more sophisticated UI for interacting with the application.
+- Add support for more diverse data sources and types.
+- Enhance the ETL pipeline with more complex data transformations.
+- Implement real-time data processing and alerting.
+- Expand test coverage, including more integration tests.
+- Add user authentication and authorization.
+- Improve error handling and logging throughout the application.
+- Conduct performance optimization for all components.
+- Explore advanced LLM techniques for query understanding and response generation.

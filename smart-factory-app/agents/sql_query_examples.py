@@ -206,6 +206,75 @@ WHERE ls.rn = 1;
         "expected_intent": "get_last_running_status",
         "keywords": ["status", "running status", "machine state", "last status", "current status", "alarm"],
         "tables_involved": ["equipment_alarm", "equipment_status", "equipment_status_code"] # Removed shift, d_date, app_metadata unless directly used by status logic
+    },
+    {
+        "id": "equipment_alarm_status_summary",
+        "name": "Equipment Alarm/Status Summary",
+        "description": "Provides a summary of equipment alarms/statuses, either as a count of occurrences or total duration, within a specified time range, for specific equipment and shift. Note: 'alarm' and 'status' are used interchangeably.",
+        "natural_language_equivalent": "Show me the alarm/status summary for equipment :equipment_id from :start_date to :end_date for shift :shift_id, focusing on :metric_key (count or duration), relative to :current_time if still active.",
+        "query_template": """
+WITH relevant_alarms AS (
+    SELECT
+        eqa.equipment_id,
+        eqa.alert_name,
+        eqa.start_time,
+        COALESCE(eqa.end_time, :current_time) AS end_time_coalesced, -- Use current_time if end_time is NULL
+        esc.short_status,
+        esc.rgb_code,
+        esc.status AS status_name
+    FROM equipment_alarm eqa
+    JOIN equipment_status_code esc ON UPPER(esc.status) = UPPER(eqa.alert_name)
+    WHERE
+        (eqa.start_time <= :end_date AND COALESCE(eqa.end_time, :current_time) >= :start_date) -- Simplified time overlap
+        AND (eqa.equipment_id = :equipment_id OR :equipment_id IS NULL OR :equipment_id = '')
+        AND (:shift_id IS NULL OR :shift_id = '' OR eqa.shift_id = :shift_id)
+        AND esc.short_status IS NOT NULL
+),
+alarm_count AS (
+    SELECT
+        ra.short_status AS metric_key,
+        COUNT(ra.alert_name) AS metric_value,
+        COUNT(ra.alert_name)::TEXT AS label, -- Ensure label is TEXT
+        ra.rgb_code
+    FROM relevant_alarms ra
+    WHERE :metric_key = 'count'
+    GROUP BY ra.short_status, ra.rgb_code
+),
+alarm_duration_calc AS (
+    SELECT
+        ra.short_status AS metric_key,
+        ra.rgb_code,
+        ra.alert_name,
+        EXTRACT(EPOCH FROM (
+            LEAST(ra.end_time_coalesced, :end_date) - GREATEST(ra.start_time, :start_date)
+        )) AS duration_seconds
+    FROM relevant_alarms ra
+    WHERE :metric_key = 'duration'
+      AND LEAST(ra.end_time_coalesced, :end_date) > GREATEST(ra.start_time, :start_date) -- Ensure positive duration within bounds
+),
+alarm_duration_summary AS (
+    SELECT
+        adc.metric_key,
+        adc.rgb_code,
+        ROUND(SUM(adc.duration_seconds) / 60.0, 0) AS metric_value, -- Total duration in minutes
+        CONCAT(
+            FLOOR(SUM(adc.duration_seconds) / 3600), 'H ',
+            FLOOR((SUM(adc.duration_seconds)::integer % 3600) / 60), 'M'
+        ) AS label
+    FROM alarm_duration_calc adc
+    GROUP BY adc.metric_key, adc.rgb_code
+    HAVING SUM(adc.duration_seconds) >= 60 -- Only include if total duration is at least 1 minute
+)
+SELECT metric_key, metric_value, label, rgb_code FROM alarm_count
+UNION ALL -- Changed to UNION ALL as they are distinct due to :metric_key filter
+SELECT metric_key, metric_value, label, rgb_code FROM alarm_duration_summary
+ORDER BY metric_value DESC
+LIMIT 10;
+""",
+        "parameters": ["equipment_id", "start_date", "end_date", "shift_id", "metric_key", "current_time"],
+        "expected_intent": "get_alarm_status_summary",
+        "keywords": ["alarm summary", "status summary", "equipment status", "equipment alarm", "count", "duration"],
+        "tables_involved": ["equipment_alarm", "equipment_status_code"]
     }
 ]
 
