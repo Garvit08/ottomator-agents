@@ -1,5 +1,6 @@
 import os
 import sys
+import time # Added for performance timing
 from sqlalchemy import create_engine
 from langchain_community.agent_toolkits import SQLDatabaseToolkit
 from langchain_community.utilities import SQLDatabase
@@ -20,7 +21,7 @@ project_root_sql_agent = os.path.abspath(os.path.join(current_dir_sql_agent, '..
 # For direct script run:
 if project_root_sql_agent not in sys.path:
     # This makes `from smart_factory_app.config...` work
-    sys.path.insert(0, os.path.dirname(project_root_sql_agent)) 
+    sys.path.insert(0, project_root_sql_agent) 
 
 try:
     from smart_factory_app.config.config import DATABASE_URI, OLLAMA_MODEL, OLLAMA_BASE_URL # Using Ollama for consistency, though OpenAI was placeholder
@@ -106,6 +107,8 @@ def run_sql_query(natural_language_query: str, parsed_query_dict: Optional[Dict[
         - The SQL agent's result string.
         - A list of IDs/names of the few-shot examples used (empty if none).
     """
+    total_function_start_time = time.time()
+
     if not agent_executor:
         return "SQL Agent (agent_executor) not initialized. Cannot run query.", []
     if not llm: # llm is the OpenAI placeholder instance for the agent
@@ -117,7 +120,10 @@ def run_sql_query(natural_language_query: str, parsed_query_dict: Optional[Dict[
 
     if parsed_query_dict:
         try:
+            get_examples_start_time = time.time()
             relevant_examples, suggested_tables = get_relevant_sql_examples(parsed_query_dict, max_examples=2)
+            get_examples_duration = time.time() - get_examples_start_time
+            print(f"Time for get_relevant_sql_examples: {get_examples_duration:.3f} seconds")
             
             if relevant_examples:
                 example_prompts = ["Here are some examples of how a user question maps to an SQL query:"]
@@ -148,14 +154,31 @@ def run_sql_query(natural_language_query: str, parsed_query_dict: Optional[Dict[
         except Exception as e:
             print(f"Error retrieving or formatting SQL few-shot examples/hints: {e}")
             # Proceed with the original query if example/hint generation fails
+            # Ensure duration is still printed if an error occurs after timing starts but before it ends
+            if 'get_examples_start_time' in locals() and 'get_examples_duration' not in locals():
+                 get_examples_duration = time.time() - get_examples_start_time
+                 print(f"Time for get_relevant_sql_examples (until error): {get_examples_duration:.3f} seconds")
+
 
     try:
+        agent_run_start_time = time.time()
         # The agent_executor.run method takes the final query string.
         print(f"Sending to SQL Agent: {augmented_query[:500]}...") # Log snippet of what's sent
-        result = agent_executor.run(augmented_query) 
+        result = agent_executor.run(augmented_query)
+        agent_run_duration = time.time() - agent_run_start_time
+        print(f"Time for agent_executor.run: {agent_run_duration:.3f} seconds")
+        
+        total_function_duration = time.time() - total_function_start_time
+        print(f"Total time for run_sql_query function: {total_function_duration:.3f} seconds")
         return str(result), selected_example_info
     except Exception as e:
         print(f"Error running query with SQL Agent: {e}")
+        if 'agent_run_start_time' in locals() and 'agent_run_duration' not in locals():
+            agent_run_duration = time.time() - agent_run_start_time
+            print(f"Time for agent_executor.run (until error): {agent_run_duration:.3f} seconds")
+        
+        total_function_duration = time.time() - total_function_start_time
+        print(f"Total time for run_sql_query function (until error): {total_function_duration:.3f} seconds")
         return f"Error running SQL query: {e}", selected_example_info
 
 # Example Usage (optional, can be commented out or moved to a main script)

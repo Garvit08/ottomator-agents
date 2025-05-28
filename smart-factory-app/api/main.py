@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import time # Added for performance timing
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import uvicorn
@@ -10,7 +11,7 @@ from fastapi import FastAPI, HTTPException # Already present
 from pydantic import BaseModel # Already present
 import uvicorn # Already present
 from langchain.memory import ConversationBufferWindowMemory # Added for chat history
-from typing import Optional # For Pydantic optional fields
+from typing import Optional, Dict # For Pydantic optional fields and Dict type hint
 
 # --- Path Adjustments ---
 # Ensure 'smart_factory_app' and its submodules can be found.
@@ -173,6 +174,9 @@ async def process_query_endpoint(user_query: UserQuery):
     """
     Processes a user's natural language query about factory operations.
     """
+    endpoint_start_time = time.time() # Total endpoint time
+    timings = {} # To store durations
+
     original_query = user_query.query
     user_id = user_query.user_id # Use user_id for memory key
     print(f"\nReceived query: '{original_query}' from user: '{user_id}'")
@@ -181,14 +185,17 @@ async def process_query_endpoint(user_query: UserQuery):
         # 1. Load Conversation History for the user
         user_memory = get_user_memory(user_id)
         # `load_memory_variables` takes an empty dict if the memory doesn't require specific inputs to load.
-        loaded_memory_vars = user_memory.load_memory_variables({}) 
+        loaded_memory_vars = user_memory.load_memory_variables({})
         chat_history_str = loaded_memory_vars.get(user_memory.memory_key, "") # Default to empty string
         
         log_message(f"Loaded chat history for user '{user_id}':\n{chat_history_str if chat_history_str else 'No history available.'}")
 
         # 2. Parse Query using LLMInterface, now with chat history
-        # LLMInterface methods were updated in the previous step to accept chat_history
+        t_parse_start = time.time()
         parsed_query_data = llm_interface.parse_query(original_query, chat_history=chat_history_str)
+        timings["parse_query"] = time.time() - t_parse_start
+        print(f"Time for parse_query: {timings['parse_query']:.3f} seconds")
+        
         intent = parsed_query_data.get("intent", "unknown")
         machine_id = parsed_query_data.get("machine_id")
         timestamp_info = parsed_query_data.get("timestamp") or parsed_query_data.get("timestamp_range")
@@ -212,11 +219,13 @@ async def process_query_endpoint(user_query: UserQuery):
         intermediate_data = {}
         question_for_sql_agent = "N/A" # For debug info
         cypher_query_for_kg = "N/A" # For debug info
+        query_params_for_kg = {} # For debug info for KG params
         search_query_for_vector_db = original_query # Default
         query_keywords_for_vector_db = []
 
 
         # --- Step 1: Initial SQL Agent Call (if applicable) ---
+        t_sql_start = time.time()
         if not _api_forced_mock_active:
             # Formulate a more targeted initial question for the SQL Agent
             if intent == "analyze_downtime" and machine_id and timestamp_info:
@@ -233,19 +242,17 @@ async def process_query_endpoint(user_query: UserQuery):
                 kpi = parameters.get('kpi_name', 'all relevant KPIs') if parameters else 'all relevant KPIs'
                 question_for_sql_agent = f"Retrieve hourly data for machine {machine_id} concerning {kpi} on {timestamp_info}."
             elif intent in ["get_status", "get_equipment_details", "get_production_goals", "get_minute_data", "get_production_count", "summarize_production"]:
-                # Generic question formulation for other intents needing SQL
                 question_for_sql_agent = f"Regarding user query '{original_query}', provide relevant information from SQL tables. Focus on intent '{intent}'"
                 if machine_id: question_for_sql_agent += f", machine '{machine_id}'"
                 if timestamp_info: question_for_sql_agent += f", around time '{timestamp_info}'"
                 if parameters: question_for_sql_agent += f", with parameters: {json.dumps(parameters)}"
-            else: # General query or intent that might not directly map to a structured SQL query via agent
+            else: 
                 question_for_sql_agent = f"Investigate based on user query: {original_query}. Parsed intent: {intent}, machine: {machine_id}, time: {timestamp_info}, params: {parameters}."
 
-            if question_for_sql_agent != "N/A": # Check if a question was actually formulated
+            if question_for_sql_agent != "N/A":
                 log_message(f"Constructed question for SQL Agent: {question_for_sql_agent}")
-                sql_examples_used_info = [] # Initialize here
+                sql_examples_used_info = [] 
                 try:
-                    # Pass parsed_query_data for few-shot example selection in sql_agent
                     sql_data_result, sql_examples_used_info = run_sql_query(
                         natural_language_query=question_for_sql_agent,
                         parsed_query_dict=parsed_query_data 
@@ -254,45 +261,45 @@ async def process_query_endpoint(user_query: UserQuery):
                     log_message(f"SQL Agent Result: {sql_data_str[:300]}...")
                     if sql_examples_used_info:
                         log_message(f"SQL Agent used few-shot examples: {sql_examples_used_info}")
-                    
-                    # --- Simple example of extracting info from SQL for conditional KG call ---
-                    # This is a placeholder for actual parsing of sql_data_str.
-                    # In a real scenario, sql_agent might return structured data or LLM would parse its output.
-                    if "fault_code = 'FC-123'" in sql_data_str or (parameters and parameters.get("fault_code") == 'FC-123'): # Example check
+                    if "fault_code = 'FC-123'" in sql_data_str or (parameters and parameters.get("fault_code") == 'FC-123'):
                         intermediate_data["fault_code_from_sql"] = 'FC-123'
-                    elif "alarm_code: ALM001" in sql_data_str: # Another example
-                        intermediate_data["fault_code_from_sql"] = 'ALM001' # Assuming alarm code is a fault code
-
+                    elif "alarm_code: ALM001" in sql_data_str:
+                        intermediate_data["fault_code_from_sql"] = 'ALM001'
                 except Exception as e:
                     log_message(f"Error calling SQL Agent: {e}")
                     sql_data_str = "Error retrieving data from SQL database."
+            else: # No specific SQL question formulated
+                 sql_data_str = "No SQL query was formulated for this request."
         elif _api_forced_mock_active:
             sql_data_str = "Mock SQL: CNC-001 had alarm with fault_code = 'FC-123' yesterday (API mock)."
             if "CNC-001" in original_query and "yesterday" in original_query and ("stop" in original_query or "downtime" in original_query or "analyze_downtime" == intent):
-                 intermediate_data["fault_code_from_sql"] = 'FC-123' # Simulate finding fault code for mock scenario
+                 intermediate_data["fault_code_from_sql"] = 'FC-123'
+        timings["sql_agent_run"] = time.time() - t_sql_start
+        print(f"Time for sql_agent.run_sql_query: {timings['sql_agent_run']:.3f} seconds")
 
 
         # --- Step 2: Conditional KG Agent Call ---
-        # Based on intent or data from SQL (e.g., a fault_code)
+        t_kg_start = time.time()
+        kg_called = False
         extracted_fault_code = intermediate_data.get("fault_code_from_sql")
         
         if not _api_forced_mock_active and \
            (intent == "find_error_cause" or extracted_fault_code or (parameters and parameters.get("fault_code"))):
             
             code_to_query = extracted_fault_code or (parameters.get("fault_code") if parameters else None)
-            query_params = {}
-
+            
             if code_to_query:
                 cypher_query_for_kg = "MATCH (f:Fault {code: $code})-[:CAUSED_BY|LINKED_TO_RECOMMENDATION*1..2]->(related) RETURN f.code AS fault_code, related.description AS related_info, labels(related) as related_type"
-                query_params = {'code': code_to_query}
+                query_params_for_kg = {'code': code_to_query}
             elif intent == "find_error_cause" and machine_id: 
                 cypher_query_for_kg = "MATCH (m:Machine {id: $machine_id})-[:HAD_ALARM|EXPERIENCED_STATUS*1..2]->(event)-[:ASSOCIATED_WITH|SUGGESTS_CAUSE*0..1]->(cause) RETURN event.type AS event_type, event.description AS event_desc, cause.description AS possible_cause ORDER BY event.timestamp DESC LIMIT 5"
-                query_params = {'machine_id': machine_id}
+                query_params_for_kg = {'machine_id': machine_id}
             
             if cypher_query_for_kg != "N/A":
-                log_message(f"Constructed Cypher query for KG Agent: {cypher_query_for_kg} with params {query_params}")
+                kg_called = True
+                log_message(f"Constructed Cypher query for KG Agent: {cypher_query_for_kg} with params {query_params_for_kg}")
                 try:
-                    kg_results = kg_agent.query(cypher_query_for_kg, params=query_params)
+                    kg_results = kg_agent.query(cypher_query_for_kg, params=query_params_for_kg)
                     if kg_results:
                         kg_context_str = f"Knowledge Graph found: {json.dumps(kg_results)}"
                     else:
@@ -304,40 +311,43 @@ async def process_query_endpoint(user_query: UserQuery):
             else:
                 kg_context_str = "No specific KG query formulated for this intent/data."
         elif _api_forced_mock_active and extracted_fault_code == 'FC-123':
+             kg_called = True # Simulate call for mock
              kg_context_str = "Mock KG: Fault FC-123 is caused by 'Sensor Malfunction' (API mock)."
         else:
             kg_context_str = "No KG query needed or conditions not met."
+        
+        if kg_called:
+            timings["kg_agent_query"] = time.time() - t_kg_start
+            print(f"Time for kg_agent.query: {timings['kg_agent_query']:.3f} seconds")
+        else:
+            timings["kg_agent_query"] = 0.0 # Not called
 
 
         # --- Step 3: Refined Vector Agent Call ---
-        # Augment search query with insights from SQL/KG if available
+        t_vector_start = time.time()
         if not _api_forced_mock_active:
             refined_search_terms = []
-            if sql_data_str and "No specific data" not in sql_data_str and "Error retrieving" not in sql_data_str:
-                # Simple refinement: just append non-empty SQL string.
-                # A more advanced method would be to summarize SQL output here if it's too long.
-                refined_search_terms.append(f"Context from SQL: {sql_data_str[:500]}") # Limit length
-            if kg_context_str and "No specific information" not in kg_context_str and "Error retrieving" not in kg_context_str:
+            if sql_data_str and "No specific data" not in sql_data_str and "Error retrieving" not in sql_data_str and "No SQL query was formulated" not in sql_data_str :
+                refined_search_terms.append(f"Context from SQL: {sql_data_str[:500]}")
+            if kg_context_str and "No specific information" not in kg_context_str and "Error retrieving" not in kg_context_str and "No KG query needed" not in kg_context_str:
                 refined_search_terms.append(f"Context from KG: {kg_context_str[:300]}")
 
             if refined_search_terms:
                 search_query_for_vector_db = f"{original_query} {' '.join(refined_search_terms)}"
-            else: # Fallback to original query
+            else:
                 search_query_for_vector_db = original_query
             
-            # Keywords: machine_id, key parameters, parts of intent.
             query_keywords_for_vector_db = [kw for kw in intent.split('_') if kw not in ["get", "fetch", "find"]]
             if machine_id: query_keywords_for_vector_db.append(machine_id)
             if parameters:
                 for k,v in parameters.items():
                     if isinstance(v, str): query_keywords_for_vector_db.append(v)
-                    # Add specific important keys like 'fault_code', 'kpi_name'
                     if k in ["fault_code", "alarm_code", "kpi_name", "sensor_id"]: 
                         if isinstance(v, str): query_keywords_for_vector_db.append(v)
             if intermediate_data.get("fault_code_from_sql"):
                 query_keywords_for_vector_db.append(intermediate_data["fault_code_from_sql"])
             
-            query_keywords_for_vector_db = list(set(kw for kw in query_keywords_for_vector_db if kw and len(kw)>1)) # Basic filtering
+            query_keywords_for_vector_db = list(set(kw for kw in query_keywords_for_vector_db if kw and len(kw)>1))
             
             log_message(f"Refined search query for Vector Agent: '{search_query_for_vector_db[:300]}...', Keywords: {query_keywords_for_vector_db}")
             try:
@@ -357,9 +367,12 @@ async def process_query_endpoint(user_query: UserQuery):
                 vector_results_docs = ["Error retrieving documents from vector database."]
         elif _api_forced_mock_active:
             vector_results_docs = ["Mock Vector DB: Found past issue log for FC-123 on CNC-001 (API mock)."]
+        timings["vector_agent_search"] = time.time() - t_vector_start
+        print(f"Time for vector_agent.hybrid_search: {timings['vector_agent_search']:.3f} seconds")
 
 
         # 4. Generate Response using LLMInterface, now with chat history
+        t_gen_response_start = time.time()
         final_response_text = llm_interface.generate_response(
             sql_data=sql_data_str,
             kg_context=kg_context_str,
@@ -367,18 +380,18 @@ async def process_query_endpoint(user_query: UserQuery):
             user_query=original_query,
             chat_history=chat_history_str
         )
+        timings["llm_generate_response"] = time.time() - t_gen_response_start
+        print(f"Time for llm_interface.generate_response: {timings['llm_generate_response']:.3f} seconds")
 
         # 5. Save context to memory
-        # Use the keys specified in ConversationBufferWindowMemory constructor (input_key, output_key)
         user_memory.save_context(
             {user_memory.input_key: original_query}, 
             {user_memory.output_key: final_response_text}
         )
         log_message(f"Saved context for user '{user_id}'.")
-        # For debugging, print current memory content:
-        # current_history_debug = user_memory.load_memory_variables({})[user_memory.memory_key]
-        # log_message(f"Current history for user '{user_id}':\n{current_history_debug}")
-
+        
+        timings["total_endpoint_duration"] = time.time() - endpoint_start_time
+        print(f"Total time for process_query_endpoint: {timings['total_endpoint_duration']:.3f} seconds")
 
         # 6. Return Response
         return QueryResponse(
@@ -387,31 +400,33 @@ async def process_query_endpoint(user_query: UserQuery):
             debug_info={
                 "original_query": original_query,
                 "chat_history_provided_to_llm": chat_history_str[:1000] + "..." if len(chat_history_str) > 1000 else chat_history_str,
-                # Inputs to Agents
                 "question_to_sql_agent": question_for_sql_agent,
-                "sql_agent_few_shot_examples_used": sql_examples_used_info if 'sql_examples_used_info' in locals() else "N/A (SQL agent not called or error)",
+                "sql_agent_few_shot_examples_used": sql_examples_used_info if 'sql_examples_used_info' in locals() and question_for_sql_agent != "N/A" else "N/A",
                 "cypher_query_to_kg_agent": cypher_query_for_kg,
-                "params_for_kg_agent": query_params if 'query_params' in locals() and cypher_query_for_kg != "N/A" else "N/A",
+                "params_for_kg_agent": query_params_for_kg if cypher_query_for_kg != "N/A" else "N/A",
                 "refined_query_to_vector_agent": search_query_for_vector_db[:500] + "..." if len(search_query_for_vector_db) > 500 else search_query_for_vector_db,
                 "keywords_for_vector_agent": query_keywords_for_vector_db,
-                # Outputs from Agents (or error/default messages)
                 "sql_agent_response_snippet": sql_data_str[:1000] + "..." if len(sql_data_str) > 1000 else sql_data_str,
                 "kg_agent_response_snippet": kg_context_str[:1000] + "..." if len(kg_context_str) > 1000 else kg_context_str,
                 "vector_agent_response_docs": vector_results_docs, 
-                # Intermediate data for context
                 "fault_code_from_sql_for_kg": intermediate_data.get("fault_code_from_sql", "N/A"),
-                # Status Flags
                 "api_forced_mocks_active": _api_forced_mock_active,
                 "llm_interface_is_mock": getattr(llm_interface, 'use_mock', _api_forced_mock_active),
-                "core_modules_imported": CORE_MODULES_IMPORTED
+                "core_modules_imported": CORE_MODULES_IMPORTED,
+                "performance_timings_seconds": {k: f"{v:.3f}" for k, v in timings.items()}
             }
         )
 
     except Exception as e:
         print(f"Error processing query: {e}")
         import traceback
-        traceback.print_exc() # Print full traceback to console for debugging
-        raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
+        traceback.print_exc() 
+        # Add timings to error response if available
+        if timings: 
+            print(f"Timings before error: {timings}")
+        timings["total_endpoint_duration_on_error"] = time.time() - endpoint_start_time
+        print(f"Total time for process_query_endpoint before error: {timings['total_endpoint_duration_on_error']:.3f} seconds")
+        raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}. Timings: {timings}")
 
 
 @app.get("/")
@@ -436,3 +451,8 @@ if __name__ == "__main__":
 #    or for development with auto-reload: `uvicorn main:app --reload`
 #    (Ensure your terminal's working directory is `smart-factory-app/api/` for `uvicorn main:app --reload` to work directly,
 #     or specify the app path like `uvicorn smart_factory_app.api.main:app --reload` from the project root if PYTHONPATH is set up)
+
+# --- Helper for logging within the endpoint ---
+def log_message(message: str):
+    """Utility function to print log messages from the endpoint."""
+    print(f"[API Endpoint Log] {message}")

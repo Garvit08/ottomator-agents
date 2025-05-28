@@ -2,13 +2,19 @@ import os
 import json
 from typing import Dict, List, Optional, Any
 
+import sys # Ensure sys is imported for path adjustments
+from langchain_core.pydantic_v1 import BaseModel, Field # For structured output schema
+
 # Attempt to import Ollama. If not available, use a mock.
 try:
     from langchain_community.llms import Ollama
+    from langchain_community.chat_models import ChatOllama # For structured output
     OLLAMA_AVAILABLE = True
 except ImportError:
+    Ollama = None # Define Ollama as None if import fails
+    ChatOllama = None # Define ChatOllama as None
     OLLAMA_AVAILABLE = False
-    # print("Ollama not found. Using MockOllama for LLM interactions.")
+    # print("Ollama or ChatOllama not found. Using MockOllama for LLM interactions.")
 
 
 # Path adjustments for config import
@@ -159,117 +165,172 @@ class MockOllama:
     def __call__(self, prompt: str, **kwargs) -> str: # For compatibility with some Langchain patterns
         return self.invoke(prompt, **kwargs)
 
+# --- Pydantic Models for Structured Output ---
+class TimestampRange(BaseModel):
+    start_date: Optional[str] = Field(None, description="The start date of a time range, if applicable.")
+    end_date: Optional[str] = Field(None, description="The end date of a time range, if applicable.")
+    # Adding specific time fields if the model can extract them
+    start_time: Optional[str] = Field(None, description="The start time, if a specific time is mentioned with the start date.")
+    end_time: Optional[str] = Field(None, description="The end time, if a specific time is mentioned with the end date.")
+
+
+class ParsedQuery(BaseModel):
+    intent: str = Field(description="The primary goal or intent of the user's query.")
+    machine_id: Optional[List[str]] = Field(default=None, description="Specific equipment ID(s) or name(s) mentioned. Always return as a list of strings, or null if none.")
+    timestamp: Optional[str] = Field(default=None, description="A specific single point in time, e.g., 'yesterday', '2023-10-26', 'today at 2 PM'. Use this if not a range.")
+    timestamp_range: Optional[TimestampRange] = Field(default=None, description="A date or time range for the query. Use this if a range is specified or implied (e.g., 'last week').")
+    parameters: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Other relevant parameters, filters, or specific data points. Example: {'oee_threshold': 85, 'kpi_name': 'production_rate'}")
+
+
 # --- LLM Interface Class ---
 class LLMInterface:
     def __init__(self, model_name: str = OLLAMA_MODEL, 
                  base_url: Optional[str] = OLLAMA_BASE_URL, 
-                 use_mock: bool = not OLLAMA_AVAILABLE,
-                 # chat_history is not directly used in __init__ but for consistency if methods need it
-                 ):
+                 use_mock: bool = not OLLAMA_AVAILABLE):
         
         self.model_name = model_name
         self.base_url = base_url
         self.use_mock = use_mock
 
-        # Load prompt templates
         self.parse_query_prompt_template = load_prompt_template(PARSE_QUERY_PROMPT_FILE)
         self.generate_response_prompt_template = load_prompt_template(GENERATE_RESPONSE_PROMPT_FILE)
 
+        self.basic_llm = None # For generate_response or fallback
+        self.structured_llm = None # For parse_query with structured output
+
         if not self.parse_query_prompt_template or not self.generate_response_prompt_template:
-            print("LLMInterface: Critical error - prompt templates could not be loaded. Mocking or LLM calls will likely fail.")
-            self.use_mock = True # Force mock if prompts are missing
-            # Provide very basic default templates if files are missing, to prevent crashes when .format() is called
+            print("LLMInterface: Critical error - prompt templates could not be loaded. Forcing mock mode.")
+            self.use_mock = True
             if not self.parse_query_prompt_template:
-                self.parse_query_prompt_template = "New User Query: \"{user_query}\"\nChat History:\n{chat_history}\nJSON Output:"
+                self.parse_query_prompt_template = "New User Query: \"{user_query}\"\nChat History:\n{chat_history}\nJSON Output:" # Basic fallback
             if not self.generate_response_prompt_template:
-                self.generate_response_prompt_template = "User Query: {user_query}\nChat History:\n{chat_history}\nSQL: {sql_data}\nKG: {kg_context}\nVector: {vector_context_str}\nAnswer:"
+                self.generate_response_prompt_template = "User Query: {user_query}\nChat History:\n{chat_history}\nSQL: {sql_data}\nKG: {kg_context}\nVector: {vector_context_str}\nAnswer:" # Basic fallback
 
-
-        if self.use_mock or not OLLAMA_AVAILABLE:
-            print(f"LLMInterface: Using MockOllama. (Ollama available: {OLLAMA_AVAILABLE}, use_mock flag: {self.use_mock}, Prompts loaded: {bool(self.parse_query_prompt_template and self.generate_response_prompt_template)})")
-            self.llm = MockOllama(model=self.model_name, base_url=self.base_url)
+        if self.use_mock or not OLLAMA_AVAILABLE or not ChatOllama: # Check ChatOllama too
+            print(f"LLMInterface: Using MockOllama. (Ollama/ChatOllama available: {OLLAMA_AVAILABLE and bool(ChatOllama)}, use_mock flag: {self.use_mock})")
+            self.basic_llm = MockOllama(model=self.model_name, base_url=self.base_url)
+            # MockOllama will be used for both parse_query (with string parsing) and generate_response in mock mode.
+            # structured_llm remains None in mock mode for now.
         else:
             try:
-                print(f"LLMInterface: Attempting to initialize real Ollama with model: {self.model_name}, base_url: {self.base_url}")
-                self.llm = Ollama(model=self.model_name, base_url=self.base_url)
-                print("LLMInterface: Testing Ollama connection...")
-                test_response = self.llm.invoke("Hi")
-                print(f"LLMInterface: Ollama test response received (first 50 chars): '{test_response[:50]}...'")
-                print("LLMInterface: Ollama initialized and connection successful.")
+                print(f"LLMInterface: Initializing ChatOllama for structured output with model: {self.model_name}, base_url: {self.base_url}")
+                chat_model_instance = ChatOllama(
+                    model=self.model_name,
+                    base_url=self.base_url,
+                    format="json" # Crucial for .with_structured_output to work reliably
+                )
+                self.structured_llm = chat_model_instance.with_structured_output(ParsedQuery)
+                print("LLMInterface: ChatOllama for structured output initialized successfully.")
+
+                # Initialize basic Ollama for generate_response (or use ChatOllama if preferred for all)
+                print(f"LLMInterface: Initializing basic Ollama for text generation with model: {self.model_name}, base_url: {self.base_url}")
+                self.basic_llm = Ollama(model=self.model_name, base_url=self.base_url)
+                # Test basic_llm (optional)
+                # test_response = self.basic_llm.invoke("Hi") 
+                # print(f"LLMInterface: Basic Ollama test response: '{test_response[:50]}...'")
+                print("LLMInterface: Basic Ollama for text generation initialized successfully.")
+
             except Exception as e:
-                print(f"LLMInterface: Failed to initialize or connect to Ollama ({self.model_name} at {self.base_url}): {e}")
-                print("LLMInterface: Falling back to MockOllama.")
-                self.llm = MockOllama(model=self.model_name, base_url=self.base_url)
-                self.use_mock = True # Ensure use_mock reflects fallback
+                print(f"LLMInterface: Failed to initialize Ollama/ChatOllama models: {e}")
+                print("LLMInterface: Falling back to MockOllama for all operations.")
+                self.basic_llm = MockOllama(model=self.model_name, base_url=self.base_url)
+                self.use_mock = True # Ensure use_mock reflects this fallback state
+                self.structured_llm = None
+
 
     def parse_query(self, user_query: str, chat_history: str = "") -> Dict[str, Any]:
         """
-        Parses the user query to extract intent, machine_id, and timestamp using the LLM,
-        optionally considering chat history.
-        Output format is expected to be JSON.
+        Parses the user query to extract structured information using the LLM
+        with schema enforcement via Pydantic models.
         """
-        parsed_info = {"intent": "unknown", "machine_id": None, "timestamp": None, "parameters": None}
+        default_response = {"intent": "unknown", "machine_id": None, "timestamp": None, "timestamp_range": None, "parameters": None}
 
         if not self.parse_query_prompt_template:
             print("LLMInterface: Parse query prompt template not loaded. Cannot process query.")
-            return parsed_info
+            return default_response
         
         try:
-            prompt = self.parse_query_prompt_template.format(user_query=user_query, chat_history=chat_history if chat_history else "No history available.")
+            full_prompt_str = self.parse_query_prompt_template.format(
+                user_query=user_query, 
+                chat_history=chat_history if chat_history else "No history available."
+            )
+            # Remove the final "JSON Output: ..." guidance from the prompt if it exists,
+            # as with_structured_output handles the JSON generation and schema adherence.
+            if "JSON Output:" in full_prompt_str:
+                full_prompt_str = full_prompt_str.split("JSON Output:")[0].strip()
+
         except KeyError as e:
             print(f"LLMInterface: Error formatting parse_query_prompt. Missing key: {e}. Using basic prompt.")
-            # Fallback to a simpler prompt if keys are missing (e.g. if template was not loaded and basic default is used)
-            prompt = f"New User Query: \"{user_query}\"\nChat History:\n{chat_history if chat_history else 'No history available.'}\nJSON Output:"
+            full_prompt_str = f"New User Query: \"{user_query}\"\nChat History:\n{chat_history if chat_history else 'No history available.'}"
 
 
+        if not self.use_mock and self.structured_llm:
+            try:
+                # Invoke the LLM expecting a Pydantic object (ParsedQuery)
+                print(f"LLMInterface: Attempting structured output parse for query: {user_query[:50]}...")
+                parsed_object: ParsedQuery = self.structured_llm.invoke(full_prompt_str)
+                # Convert Pydantic model to dict for consistent return type
+                return parsed_object.dict(exclude_none=True)
+            except Exception as e:
+                print(f"LLMInterface: Error invoking LLM with structured output: {e}. Falling back.")
+                # Fallback path below will be used.
+        
+        # Fallback or Mock path (uses basic_llm which might be MockOllama or basic Ollama)
+        print(f"LLMInterface: Using fallback/mock path for parse_query for query: {user_query[:50]}...")
         try:
-            response = self.llm.invoke(prompt)
+            # The prompt for basic_llm should still end with an instruction for JSON if it's not the structured_llm
+            # This means the original prompt with "JSON Output:" might be better here for the fallback.
+            # Re-format with the original template if it was modified.
+            fallback_prompt = self.parse_query_prompt_template.format(
+                user_query=user_query, 
+                chat_history=chat_history if chat_history else "No history available."
+            )
+
+            response_str = self.basic_llm.invoke(fallback_prompt)
             
-            # Clean the response: LLMs sometimes add ```json ... ``` or other text
-            if "```json" in response:
-                response = response.split("```json")[1].split("```")[0].strip()
-            elif "```" in response: # Simpler case of just ``` wrapping
-                 response = response.split("```")[1].strip()
+            if "```json" in response_str:
+                response_str = response_str.split("```json")[1].split("```")[0].strip()
+            elif "```" in response_str:
+                 response_str = response_str.split("```")[1].strip()
 
-
-            parsed_json = json.loads(response)
+            parsed_json = json.loads(response_str)
             
-            # Validate and fill structure, ensuring all keys are present
-            parsed_info["intent"] = parsed_json.get("intent", "unknown")
-            parsed_info["machine_id"] = parsed_json.get("machine_id")
-            # Handle both 'timestamp' and 'timestamp_range'
-            if "timestamp" in parsed_json:
-                parsed_info["timestamp"] = parsed_json.get("timestamp")
-            if "timestamp_range" in parsed_json:
-                parsed_info["timestamp_range"] = parsed_json.get("timestamp_range")
-                if "timestamp" not in parsed_info and parsed_info["timestamp_range"]: # If only range is present
-                    parsed_info.pop("timestamp", None) # Remove the single timestamp if range exists
-
-            parsed_info["parameters"] = parsed_json.get("parameters")
-
-            return parsed_info
+            # Basic validation and structure filling
+            validated_response = {
+                "intent": parsed_json.get("intent", "unknown"),
+                "machine_id": parsed_json.get("machine_id"),
+                "timestamp": parsed_json.get("timestamp"),
+                "timestamp_range": parsed_json.get("timestamp_range"),
+                "parameters": parsed_json.get("parameters"),
+            }
+            # Ensure machine_id is a list if it's a string (for consistency with Pydantic model)
+            if isinstance(validated_response["machine_id"], str):
+                validated_response["machine_id"] = [validated_response["machine_id"]]
             
-        except json.JSONDecodeError as e:
-            print(f"Error parsing JSON response from LLM: {e}")
-            print(f"LLM Raw Response was: {response}") # Log the problematic response
-            # Fallback: try to extract key terms using simple string matching if JSON fails
-            # This is a very basic fallback.
-            if "oee" in user_query.lower(): parsed_info["intent"] = "fetch_oee"
-            # Add more basic keyword checks if needed
-            return parsed_info 
-        except Exception as e:
-            print(f"Error invoking LLM or processing response: {e}")
-            return parsed_info
+            return validated_response
+            
+        except json.JSONDecodeError as e_json:
+            print(f"LLMInterface (fallback/mock): Error parsing JSON response: {e_json}")
+            print(f"LLMInterface (fallback/mock): Raw Response was: {response_str if 'response_str' in locals() else 'N/A'}")
+            return default_response 
+        except Exception as e_gen:
+            print(f"LLMInterface (fallback/mock): Error invoking LLM or processing response: {e_gen}")
+            return default_response
 
 
     def generate_response(self, sql_data: Optional[str], kg_context: Optional[str], 
                           vector_context: Optional[List[str]], user_query: str, chat_history: str = "") -> str:
         """
-        Generates a human-readable response using the LLM based on provided contexts and chat history.
+        Generates a human-readable response using the basic LLM based on provided contexts and chat history.
         """
         if not self.generate_response_prompt_template:
             print("LLMInterface: Generate response prompt template not loaded. Cannot generate response.")
             return "Error: Response generation template is missing."
+
+        llm_to_use = self.basic_llm # Use basic_llm (Ollama or MockOllama)
+        if not llm_to_use:
+            print("LLMInterface: No LLM available for generate_response (basic_llm is None).")
+            return "Error: LLM for response generation is not available."
 
         vector_context_str = "\n".join([f"Document {i+1}: {item}" for i, item in enumerate(vector_context)]) if vector_context else "N/A"
         
@@ -288,7 +349,7 @@ class LLMInterface:
                            f"Vector: {vector_context_str}\nAnswer:")
 
         try:
-            llm_response = self.llm.invoke(full_prompt)
+            llm_response = llm_to_use.invoke(full_prompt, temperature=0.1) # Keep temperature for generate_response
             return llm_response
         except Exception as e:
             print(f"Error invoking LLM for response generation: {e}")

@@ -1,5 +1,6 @@
 import os
 import sys
+import time # Added for performance timing
 import pandas as pd
 from sqlalchemy import create_engine, text as sql_text
 from datetime import datetime, timedelta
@@ -222,6 +223,7 @@ def run_etl():
     """
     Main ETL process to fetch data from SQL, generate summaries, and load into VectorDB.
     """
+    total_etl_start_time = time.time()
     log_message("Starting ETL process...")
 
     # Initialize Database Engine
@@ -265,10 +267,10 @@ def run_etl():
 
         columns_to_fetch = table_spec["columns_to_fetch"]
         time_window_column = table_spec.get("time_window_column")
-        # Allow days_to_fetch to be specified per table in config, else use default
         days_to_fetch_for_table = table_spec.get("days_to_fetch", default_days_to_fetch if time_window_column else None)
 
         # 1. Fetch data
+        fetch_start_time = time.time()
         df = fetch_data_from_sql(
             engine, 
             table_name, 
@@ -276,30 +278,36 @@ def run_etl():
             time_window_column,
             days_to_fetch_for_table 
         )
+        fetch_duration = time.time() - fetch_start_time
+        log_message(f"Time to fetch data for '{table_name}': {fetch_duration:.3f} seconds")
 
         if df.empty:
             log_message(f"No data fetched for '{table_name}'. Skipping to next table.")
             continue
 
         # 2. Generate text summaries and metadatas
+        generate_summaries_start_time = time.time()
         texts, metadatas = generate_text_summaries(df, table_name)
+        generate_summaries_duration = time.time() - generate_summaries_start_time
+        log_message(f"Time to generate summaries for '{table_name}': {generate_summaries_duration:.3f} seconds")
 
         if not texts:
             log_message(f"No text summaries generated for '{table_name}'. Skipping to next table.")
             continue
 
         # 3. Load into VectorDB
-        # Generate unique IDs for vector DB entries, e.g., from primary key or hash of content
-        # For now, VectorAgent's add_texts will generate IDs if not provided.
-        # We could create more meaningful IDs like f"{table_name}_{row_primary_key}"
+        add_to_vector_db_start_time = time.time()
         log_message(f"Adding {len(texts)} text summaries from '{table_name}' to VectorDB.")
         try:
             vector_agent.add_texts(texts=texts, metadatas=metadatas)
             log_message(f"Successfully added data from '{table_name}' to VectorDB.")
         except Exception as e:
             log_message(f"Error adding texts from '{table_name}' to VectorDB: {e}")
+        add_to_vector_db_duration = time.time() - add_to_vector_db_start_time
+        log_message(f"Time to add texts from '{table_name}' to VectorDB: {add_to_vector_db_duration:.3f} seconds")
 
-    log_message("ETL process completed.")
+    total_etl_duration = time.time() - total_etl_start_time
+    log_message(f"ETL process completed. Total duration: {total_etl_duration:.3f} seconds")
 
 # --- Main Execution ---
 if __name__ == "__main__":

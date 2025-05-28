@@ -1,138 +1,218 @@
-Given the user query: "{user_query}"
+Your primary task is to analyze a user's query about factory operations and convert it into a structured JSON object. To ensure accuracy, you must first follow a structured thought process before generating the JSON.
 
-Your task is to extract the following information. The user might be asking about factory equipment, its performance, status, alarms, or production goals. Refer to concepts like Overall Equipment Effectiveness (OEE), Key Performance Indicators (KPIs), cycle times, downtime, alarms, maintenance schedules, and production targets.
+**Chain-of-Thought Process:**
 
-1.  **intent**: The primary goal of the user. Examples:
-    - "fetch_oee" (for queries about Overall Equipment Effectiveness, typically from daily or aggregated data)
-    - "get_maintenance_history" (for queries about past maintenance, could be from alarm data or status logs if they indicate maintenance)
-    - "find_error_cause" (for troubleshooting or error analysis, often related to alarms or status changes)
-    - "summarize_production" (for production summaries, from daily, hourly, or other aggregated data)
-    - "get_cycle_time" (for queries about cycle times, potentially from minute or hourly data)
-    - "get_downtime_summary" (for queries about machine downtime, could be from status or alarm tables)
-    - "get_production_count" (for specific production numbers, from daily or hourly data)
-    - "get_alarms" (for queries specifically asking for alarm events or history)
-    - "get_hourly_data" (for queries asking for data at an hourly resolution, like production counts, specific KPIs)
-    - "get_minute_data" (for queries asking for fine-grained sensor readings or parameters)
-    - "get_status" (for queries about the current or past status of equipment)
-    - "get_equipment_details" (for queries about specific equipment attributes like type, manufacturer)
-    - "get_production_goals" (for queries about production targets or goals)
-    - "compare_daily_oee" (for comparing OEE of multiple machines)
-    - "general_query" (if none of the above fit or it's a broad question)
+Before providing the final JSON, please go through the following reasoning steps. This thought process is for your internal reasoning and should not be part of the final JSON output.
 
-2.  **machine_id**: The identifier of the machine(s) or equipment, if mentioned (e.g., "CNC-001", "RobotArm-5", "M002", "Welder-003"). This could also be a list if multiple machines are mentioned.
-3.  **timestamp**: The specific time or time range mentioned (e.g., "yesterday", "last week", "2023-10-26", "today between 2 PM and 5 PM", "June 15th, 2024"). If a range, provide it.
-4.  **parameters**: Any other relevant parameters or filters mentioned. Examples:
-    - If the user asks for "OEE above 80%", parameters would be {{"oee_threshold": 80}}.
-    - If asking for specific KPIs: {{"kpi_name": "production_rate"}}.
-    - If asking for specific alarm codes: {{"alarm_code": "ERR-502"}}.
-    - If comparing multiple items: {{"comparison_items": ["CNC-001", "CNC-002"]}}.
-    - If asking about specific sensor parameters: {{"parameter_name": "Temperature"}}.
+1.  **Understand the Core Request (Intent):**
+    *   What is the user's primary goal? Are they asking for data, a summary, a comparison, details about equipment, or trying to find the cause of an issue?
+    *   Based on this, select the most appropriate `intent` from the list provided below.
 
-Please return the information as a JSON object with keys "intent", "machine_id", "timestamp" (or "timestamp_range"), and "parameters".
-If a piece of information is not found, use `null` or an empty string for its value.
-For "parameters", if none are found, use `null`.
+2.  **Identify Equipment (machine_id):**
+    *   Are specific machines or equipment IDs mentioned (e.g., "CNC-001", "RobotArm-5", "Welder-003")?
+    *   If multiple machines are mentioned in a comparative context, list them. If the query is about a single piece of equipment, identify it. If no specific equipment is mentioned or if it's a general query, this might be `null`.
 
-Example Scenarios:
+3.  **Determine Timeframe (timestamp / timestamp_range):**
+    *   Is a specific date ("2023-10-26"), time ("today at 2 PM"), or time range ("last week", "yesterday between 2 PM and 5 PM") mentioned?
+    *   For relative timeframes like "yesterday" or "last Tuesday", interpret them based on a conceptual "current date". For the purpose of your reasoning, you can assume a current date (e.g., "if today is 2023-10-26, then yesterday was 2023-10-25").
+    *   If a single point in time is given, use "timestamp". If a duration is implied or stated, use "timestamp_range" with "start" and "end" values.
 
+4.  **Extract Key Parameters and Filters (parameters):**
+    *   What other specific details, filters, or data points is the user asking for?
+    *   Examples: "OEE above 80%" (filter), "production rate" (specific KPI), "alarm code ERR-502" (filter), "compare CNC-001 and CNC-002" (comparison items), "Temperature" (sensor parameter).
+    *   Collect these into a dictionary. If none, this will be `null`.
+
+5.  **Construct the Final JSON:**
+    *   Based on steps 1-4, assemble the JSON object with the keys "intent", "machine_id", "timestamp" (or "timestamp_range"), and "parameters".
+
+**Possible Intents:**
+*   "fetch_oee": For queries about Overall Equipment Effectiveness.
+*   "get_maintenance_history": For past maintenance records.
+*   "find_error_cause": For troubleshooting or error analysis.
+*   "summarize_production": For production summaries.
+*   "get_cycle_time": For cycle time queries.
+*   "get_downtime_summary": For machine downtime information.
+*   "get_production_count": For specific production numbers.
+*   "get_alarms": For alarm events or history.
+*   "get_hourly_data": For data at hourly resolution.
+*   "get_minute_data": For fine-grained sensor readings.
+*   "get_status": For current or past equipment status.
+*   "get_equipment_details": For specific equipment attributes.
+*   "get_production_goals": For production targets.
+*   "compare_daily_oee": For comparing OEE of multiple machines.
+*   "general_query": If none ofthe above fit or it's a broad question.
+
+---
+**Handling User Queries:**
+
+**Example 1:**
 User Query: "What was the OEE for machine CNC-002 yesterday, specifically if it was above 85%?"
+(Assume current date for reasoning: 2023-10-27)
+
+Thought Process:
+1.  Intent: User is asking for OEE. Intent is "fetch_oee".
+2.  Equipment ID: "CNC-002".
+3.  Timeframe: "yesterday". If today is 2023-10-27, yesterday was 2023-10-26. This implies a single day, so it can be represented as a timestamp or a range covering that day. Let's use "timestamp": "2023-10-26".
+4.  Parameters: User specified "OEE above 85%". This translates to `{"oee_threshold": 85}`.
+5.  Final JSON construction.
+
 JSON Output:
-{{
+```json
+{
     "intent": "fetch_oee",
     "machine_id": "CNC-002",
-    "timestamp": "yesterday",
-    "parameters": {{
+    "timestamp": "2023-10-26",
+    "parameters": {
         "oee_threshold": 85
-    }}
-}}
+    }
+}
+```
 
+**Example 2:**
 User Query: "Show me the downtime for OP-10 last week."
+(Assume current date for reasoning: 2023-10-27, and "last week" refers to the full week prior to the current one, e.g., Monday 2023-10-16 to Sunday 2023-10-22)
+
+Thought Process:
+1.  Intent: User wants to see downtime. Intent is "get_downtime_summary".
+2.  Equipment ID: "OP-10".
+3.  Timeframe: "last week". This is a range. If current date is 2023-10-27, "last week" could be interpreted as 2023-10-16 to 2023-10-22. So, `{"start": "2023-10-16", "end": "2023-10-22"}`.
+4.  Parameters: No other specific filters mentioned. So, `null`.
+5.  Final JSON construction.
+
 JSON Output:
-{{
+```json
+{
     "intent": "get_downtime_summary",
     "machine_id": "OP-10",
-    "timestamp_range": {{
-        "start": "start of last week",
-        "end": "end of last week"
-    }},
+    "timestamp_range": {
+        "start": "2023-10-16",
+        "end": "2023-10-22"
+    },
     "parameters": null
-}}
+}
+```
 
-User Query: "Show all alarms for machine 'CNC-001' yesterday."
-JSON Output:
-{{
-    "intent": "get_alarms",
-    "machine_id": "CNC-001",
-    "timestamp": "yesterday",
-    "parameters": null
-}}
-
+**Example 3:**
 User Query: "What was the hourly production count for 'Welder-003' on June 15th, 2024?"
+
+Thought Process:
+1.  Intent: User wants hourly data, specifically "production count". Intent is "get_hourly_data".
+2.  Equipment ID: "Welder-003".
+3.  Timeframe: "June 15th, 2024". This is a specific date. "timestamp": "2024-06-15".
+4.  Parameters: The specific KPI is "production_count". So, `{"kpi_name": "production_count"}`.
+5.  Final JSON construction.
+
 JSON Output:
-{{
+```json
+{
     "intent": "get_hourly_data",
     "machine_id": "Welder-003",
     "timestamp": "2024-06-15",
-    "parameters": {{
+    "parameters": {
         "kpi_name": "production_count"
-    }}
-}}
+    }
+}
+```
 
-User Query: "What is the current status of 'Press-002'?"
-JSON Output:
-{{
-    "intent": "get_status",
-    "machine_id": "Press-002",
-    "timestamp": "current",
-    "parameters": null
-}}
-
-User Query: "List production goals for 'Assembler-005'."
-JSON Output:
-{{
-    "intent": "get_production_goals",
-    "machine_id": "Assembler-005",
-    "timestamp": null,
-    "parameters": null
-}}
-
+**Example 4:**
 User Query: "Compare the daily OEE for 'CNC-001' and 'CNC-002' last week."
+(Assume current date for reasoning: 2023-10-27, and "last week" refers to Monday 2023-10-16 to Sunday 2023-10-22)
+
+Thought Process:
+1.  Intent: User wants to compare OEE for multiple machines. Intent is "compare_daily_oee".
+2.  Equipment ID: The query is about "CNC-001" and "CNC-002" but in a comparative way. The primary machine_id can be null, and the items listed in parameters.
+3.  Timeframe: "last week". This is a range: `{"start": "2023-10-16", "end": "2023-10-22"}`.
+4.  Parameters: The items to compare are "CNC-001" and "CNC-002". The KPI is "OEE". So, `{"comparison_items": ["CNC-001", "CNC-002"], "kpi_name": "OEE"}`.
+5.  Final JSON construction.
+
 JSON Output:
-{{
+```json
+{
     "intent": "compare_daily_oee",
-    "machine_id": null, # Or could list them if primary focus isn't singular
-    "timestamp_range": {{
-        "start": "start of last week",
-        "end": "end of last week"
-    }},
-    "parameters": {{
+    "machine_id": null,
+    "timestamp_range": {
+        "start": "2023-10-16",
+        "end": "2023-10-22"
+    },
+    "parameters": {
         "comparison_items": ["CNC-001", "CNC-002"],
         "kpi_name": "OEE"
-    }}
-}}
+    }
+}
+```
 
-User Query: "What type of machine is EQP-101 and who made it?"
-JSON Output:
-{{
-    "intent": "get_equipment_details",
-    "machine_id": "EQP-101",
-    "timestamp": null,
-    "parameters": null
-}}
+---
+**Example 5 (Multiple Machines & Specific Metric):**
+User Query: "What is the current downtime for machines CNC-001, CNC-002, and Ex-004?"
 
-    "intent": "get_minute_data",
-    "machine_id": "MTR-5",
-    "timestamp": "today at 3:45 PM",
-    "parameters": {{
-        "sensor_id": "S1",
-        "parameter_name": "Temperature"
-    }}
-}}
+Thought Process:
+1. Intent: User wants to know the current downtime. So, "get_current_downtime".
+2. Equipment ID: "CNC-001", "CNC-002", "Ex-004". This should be a list.
+3. Time Range: "current" implies now. For downtime, this usually means ongoing status, so no specific start/end for a historical range.
+4. Other Parameters: "downtime" is the specific metric.
+5. Final JSON:
+   ```json
+   {
+     "intent": "get_current_downtime",
+     "machine_id": ["CNC-001", "CNC-002", "Ex-004"],
+     "timestamp_range": null,
+     "parameters": {"metric": "downtime", "aggregation": "current"}
+   }
+   ```
 
+---
+**Example 6 (Query about future scheduled maintenance):**
+User Query: "Is there any maintenance scheduled for Press-001 next Monday?"
+(Assume current date for reasoning: 2023-10-27, which is a Friday. "Next Monday" would be 2023-10-30)
+
+Thought Process:
+1. Intent: User is asking about scheduled maintenance. So, "get_scheduled_maintenance".
+2. Equipment ID: "Press-001".
+3. Time Range: "next Monday". Assuming today is Friday 2023-10-27, next Monday would be 2023-10-30.
+4. Other Parameters: "maintenance" is the key subject.
+5. Final JSON:
+   ```json
+   {
+     "intent": "get_scheduled_maintenance",
+     "machine_id": "Press-001",
+     "timestamp_range": {"start_date": "2023-10-30", "end_date": "2023-10-30"},
+     "parameters": {}
+   }
+   ```
+
+---
+**Example 7 (Query with a complex time component and a user acknowledgement parameter):**
+User Query: "Show me all acknowledged critical alarms from the last full work week, which was October 16th to October 20th, 2023."
+
+Thought Process:
+1. Intent: User wants to see alarms. So, "get_alarms".
+2. Equipment ID: None specified, so it implies all machines or this will be handled by a default.
+3. Time Range: "October 16th to October 20th, 2023".
+4. Other Parameters: "critical alarms" and "acknowledged".
+5. Final JSON:
+   ```json
+   {
+     "intent": "get_alarms",
+     "machine_id": null,
+     "timestamp_range": {"start_date": "2023-10-16", "end_date": "2023-10-20"},
+     "parameters": {"severity": "critical", "status": "acknowledged"}
+   }
+   ```
 ---
 Previous conversation history (if any):
 {chat_history}
 ---
 
-Based on this history (if provided) and the new user query, extract the intent and entities from the new user query.
+Based on this history (if provided) and the new user query, perform the **Chain-of-Thought Process** described above for the new user query. Your final output *must* be only the JSON object.
+
 New User Query: "{user_query}"
+
 JSON Output:
+```json
+{
+  "intent": "...",
+  "machine_id": "...",
+  "timestamp": "..." / "timestamp_range": {"start": "...", "end": "..."},
+  "parameters": {{...}}
+}
+```

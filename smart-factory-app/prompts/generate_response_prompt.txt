@@ -1,16 +1,91 @@
 Original User Query: "{user_query}"
 
-Please synthesize a comprehensive answer based on the following information. Use factory-specific terminology like OEE, cycle time, downtime, etc., where appropriate.
+Your task is to synthesize a comprehensive and factually grounded answer based **solely** on the information provided in the sections below. Do not use any external knowledge or make assumptions beyond what is explicitly given in the context. Use factory-specific terminology like OEE, cycle time, downtime, etc., where appropriate and supported by the data.
 
+**IMPORTANT GROUNDING RULES:**
+1.  **Base your answer ONLY on the provided context.** If the information required to answer the query is not present in the `SQL Data`, `Knowledge Graph Context`, or `Vector Database Search Results`, you MUST explicitly state that the information is not available or could not be found in the relevant data sources.
+2.  **Acknowledge Missing or Erroneous Data:**
+    *   If `sql_data` indicates "No results found", "No specific data found", or an error message, acknowledge this. For example: "The SQL database did not return specific information regarding [aspect of query]."
+    *   Similarly, if `kg_context` or `vector_context_str` indicate no relevant information was found or an error occurred, state this.
+    *   If multiple sources are queried, and one provides data while another doesn't, synthesize the answer from available data and note what's missing. Example: "I found details about X in the SQL data, but no related information was available in the knowledge graph."
+3.  **Cite Sources (If Applicable and Clear):**
+    *   The `Vector Database Search Results` may contain information from various documents or summaries. If a document title or a clear source identifier is part of the `vector_context_str` for a piece of information you are using, you can attribute it. For example: "According to the 'Equipment Maintenance Log Summary', ...". Use this only if the source is clearly identifiable in the provided vector context.
+
+---
+**Example Scenarios for Response Synthesis:**
+
+**Example 1: Combining SQL data about an event with a procedural document from Vector DB.**
+
+Original User Query: "CNC-002 had a spindle over-temperature alarm. What should I do?"
+
+--- Previous Conversation History ---
+(empty)
+---
+
+--- SQL Data ---
+"Alarm ID: ALM4567, Equipment: CNC-002, Alarm: Spindle Over-Temperature, Start Time: 2023-10-27 10:15:00, Severity: High"
+---
+
+--- Knowledge Graph Context ---
+"No specific KG context found for this query."
+---
+
+--- Vector Database Search Results (Contextual Documents/Summaries) ---
+Document 1 (Title: SOP-CNC-Alarms.txt Summary):
+"Spindle Over-Temperature on CNC machines: 1. Immediately stop spindle rotation. 2. Check coolant levels and flow. 3. Inspect spindle bearings for damage if alarm persists after coolant check. 4. Contact maintenance if issue not resolved within 10 minutes."
+---
+
+User's Current Query: "CNC-002 had a spindle over-temperature alarm. What should I do?"
+
+--- Synthesized Answer (Example of how to respond) ---
+The CNC-002 machine reported a high severity 'Spindle Over-Temperature' alarm starting at 2023-10-27 10:15:00.
+Based on the Standard Operating Procedure for CNC alarms (from 'SOP-CNC-Alarms.txt'), you should:
+1.  Immediately stop spindle rotation.
+2.  Check coolant levels and flow.
+3.  Inspect spindle bearings for damage if the alarm persists after checking the coolant.
+4.  Contact maintenance if the issue is not resolved within 10 minutes.
+No specific information was found in the Knowledge Graph for this query.
+---
+
+**Example 2: Synthesizing complementary information from SQL, KG, and Vector DB.**
+
+Original User Query: "What's the status of Robot Arm RA-001 from this morning's shift? Any major issues?"
+
+--- Previous Conversation History ---
+User: How did production go today?
+AI: Production was generally good, with OEE at 82%.
+---
+
+--- SQL Data ---
+"Equipment: RA-001, Shift: 2023-10-27_Morning, OEE: 95%, Planned Downtime: 15 mins (lubrication), Unplanned Downtime: 5 mins (sensor reset)"
+---
+
+--- Knowledge Graph Context ---
+"RA-001 (Robot Arm) is part_of Line 3. A sensor fault on RA-001 can sometimes be caused by misalignment of its gripper_assembly."
+---
+
+--- Vector Database Search Results (Contextual Documents/Summaries) ---
+Document 1 (Title: ShiftLog_2023-10-27_Morning.txt Summary):
+"RA-001 had a brief sensor issue around 9:30 AM, required a quick reset. Gripper alignment checked, seems okay. No other major problems noted for RA-001 during the shift. Team met daily targets."
+---
+
+User's Current Query: "What's the status of Robot Arm RA-001 from this morning's shift? Any major issues?"
+
+--- Synthesized Answer (Example of how to respond) ---
+This morning, Robot Arm RA-001 performed well with an OEE of 95%, according to the SQL data. It had 15 minutes of planned downtime for lubrication and 5 minutes of unplanned downtime due to a sensor reset.
+The shift log (from 'ShiftLog_2023-10-27_Morning.txt') confirms a brief sensor issue around 9:30 AM which required a quick reset, and notes that gripper alignment was checked and seemed okay, with no other major problems for RA-001. The Knowledge Graph mentions that sensor faults on RA-001 can sometimes be related to gripper assembly misalignment, but the shift log suggests this was not the issue this time. The team met their daily targets.
+---
 --- Previous Conversation History ---
 {chat_history}
 ---
 
 --- SQL Data ---
 {sql_data}
+---
 
 --- Knowledge Graph Context ---
 {kg_context}
+---
 
 --- Vector Database Search Results (Contextual Documents/Summaries) ---
 {vector_context_str}
@@ -19,4 +94,4 @@ Please synthesize a comprehensive answer based on the following information. Use
 User's Current Query: "{user_query}"
 
 --- Synthesized Answer ---
-Based on all the provided information (including conversation history, data from SQL, KG, and Vector DB, and the user's current query), provide a comprehensive and contextually aware answer:
+Based **only** on the provided information (including conversation history, data from SQL, KG, and Vector DB, and the user's current query), and adhering strictly to the grounding rules above, provide a comprehensive and contextually aware answer:
