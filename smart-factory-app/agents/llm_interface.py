@@ -17,7 +17,7 @@ except ImportError:
     # print("Ollama or ChatOllama not found. Using MockOllama for LLM interactions.")
 
 try:
-    from smart_factory_app.config.config import (
+    from config.config import (
         OLLAMA_MODEL, 
         OLLAMA_BASE_URL,
         PARSE_QUERY_PROMPT_FILE,
@@ -41,7 +41,9 @@ def load_prompt_template(file_path: str) -> Optional[str]:
         if not os.path.isabs(file_path):
              # This case should ideally not be hit if config.py sets up absolute paths.
              # If it's relative, it's assumed relative to the project root (smart_factory_app_dir_llm)
-             file_path = os.path.join(smart_factory_app_dir_llm, file_path)
+            smart_factory_app_dir_llm = os.path.join(os.path.dirname(os.path.abspath(__file__)))
+             # Directory of this script
+            file_path = os.path.join(smart_factory_app_dir_llm, file_path)
 
         with open(file_path, 'r') as f:
             return f.read()
@@ -123,8 +125,8 @@ class MockOllama:
                  return json.dumps({
                     "intent": "get_equipment_details",
                     "machine_id": "EQP-101",
-                    "timestamp": null, # JSON null
-                    "parameters": null
+                    "timestamp": None, # JSON null
+                    "parameters": None
                 })
             elif "temperature for sensor s1 on machine mtr-5" in prompt.lower():
                 return json.dumps({

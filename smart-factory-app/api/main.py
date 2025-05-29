@@ -15,11 +15,11 @@ from typing import Optional, Dict # For Pydantic optional fields and Dict type h
 
 # --- Agent and Config Imports ---
 try:
-    from smart_factory_app.agents.llm_interface import LLMInterface
-    from smart_factory_app.agents.sql_agent import run_sql_query # sql_agent's own config handles its LLM and DB
-    from smart_factory_app.agents.kg_agent import KGAgent
-    from smart_factory_app.agents.vector_agent import VectorAgent
-    from smart_factory_app.config.config import (
+    from agents.llm_interface import LLMInterface
+    from agents.sql_agent import run_sql_query
+    from agents.kg_agent import KGAgent
+    from agents.vector_agent import VectorAgent
+    from config.config import (
         API_USE_MOCK_AGENTS, # Controls if API layer forces mocks
         OLLAMA_MODEL, OLLAMA_BASE_URL, # For LLMInterface if not using its internal mock decision
         NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD, # For KGAgent
@@ -37,56 +37,32 @@ except ImportError as e:
     API_USE_MOCK_AGENTS = True 
     # Define minimal mocks so the rest of the script doesn't crash if CORE_MODULES_IMPORTED is false
     # and we still attempt to run.
-    class LLMInterface:
+    class LLMInterfaceFallback:
         def __init__(self, *args, **kwargs): print("Fallback Mock LLMInterface created.")
-        def parse_query(self, q): return {"intent": "mock_fallback_intent"}
-        def generate_response(self, *args, **kwargs): return "Fallback mock LLM response."
-    def run_sql_query(q): return "Fallback mock SQL response."
-    class KGAgent:
+        def parse_query(self, query, chat_history=None): return {"intent": "mock_fallback_intent"}
+        def generate_response(self, sql_data=None, kg_context=None, vector_context=None, user_query=None, chat_history=None): return "Fallback mock LLM response."
+    def run_sql_query_fallback(natural_language_query, parsed_query_dict=None): return ("Fallback mock SQL response.", [])
+    class KGAgentFallback:
         def __init__(self, *args, **kwargs): print("Fallback Mock KGAgent created.")
-        def query(self, q, p=None): return []
+        def query(self, query, params=None): return []
         def close(self): pass
-    class VectorAgent:
+    class VectorAgentFallback:
         def __init__(self, *args, **kwargs): print("Fallback Mock VectorAgent created.")
-        def semantic_search(self, q, n_results=1): return {"documents": [["Fallback mock vector doc"]]}
+        def hybrid_search(self, query_text, keywords=None, n_results=1): return {"documents": [["Fallback mock vector doc"]]}
 
-if not CORE_MODULES_IMPORTED:
-    print("Warning: API running in a severely degraded mode due to import errors. Only mock fallbacks active.")
-
-# --- Initialize Agents ---
-# Agents will use their own default configurations from config.py if not overridden here.
-# The API_USE_MOCK_AGENTS from config.py can force the API layer to use its own mocks,
-# regardless of whether agent modules themselves could initialize.
-
-# Global flag to track if we are using the API layer's forced mocks
-# This is different from LLMInterface's internal `use_mock` which depends on Ollama's availability.
-_api_forced_mock_active = False
+# This flag indicates if the essential modules *could* be imported.
+# It doesn't guarantee the services (Ollama, DBs) are up.
+CORE_MODULES_IMPORTED = True 
 
 if API_USE_MOCK_AGENTS or not CORE_MODULES_IMPORTED:
     print("API Main: Using MOCK agents (due to API_USE_MOCK_AGENTS=True or import failures).")
     _api_forced_mock_active = True
-    llm_interface = LLMInterface(use_mock=True) # Force LLMInterface's mock
-    # Define API-level mock functions/classes if not already defined by import failure
-    if 'run_sql_query' not in locals() or CORE_MODULES_IMPORTED : # if modules imported but we still want api mock
-        def run_sql_query(query_text: str): return f"API Mock SQL result for query: {query_text}"
-    if 'KGAgent' not in locals() or CORE_MODULES_IMPORTED :
-        _KGAgentOriginal = KGAgent if 'KGAgent' in locals() else None # Store original if exists
-        class KGAgent: # API Mock KGAgent
-            def __init__(self, **kwargs): print("API Mock KGAgent initialized.")
-            def query(self, c, p=None): return [{"api_mock_kg_node": "API Mock KG Data"}]
-            def close(self): pass
-            def ensure_original_close(self): # If we had a real instance
-                 if _KGAgentOriginal and hasattr(self, '_real_instance') and self._real_instance:
-                      self._real_instance.close()
-    if 'VectorAgent' not in locals() or CORE_MODULES_IMPORTED :
-        class VectorAgent: # API Mock VectorAgent
-            def __init__(self, **kwargs): print("API Mock VectorAgent initialized.")
-            def semantic_search(self, q, n_results=1): return {"documents": [["API Mock vector semantic search."]]}
-    
-    # Instantiate mocks if they were redefined in this block
-    kg_agent = KGAgent() 
-    vector_agent = VectorAgent()
-
+    llm_interface = LLMInterfaceFallback(use_mock=True) if not CORE_MODULES_IMPORTED else LLMInterface(use_mock=True)
+    run_sql_query = run_sql_query_fallback if not CORE_MODULES_IMPORTED else run_sql_query
+    KGAgentClass = KGAgentFallback if not CORE_MODULES_IMPORTED else KGAgent
+    VectorAgentClass = VectorAgentFallback if not CORE_MODULES_IMPORTED else VectorAgent
+    kg_agent = KGAgentClass()
+    vector_agent = VectorAgentClass()
 else:
     print("API Main: Attempting to initialize REAL agents using configurations from config.py...")
     try:
@@ -183,11 +159,13 @@ async def process_query_endpoint(user_query: UserQuery):
         parsed_query_data = llm_interface.parse_query(original_query, chat_history=chat_history_str)
         timings["parse_query"] = time.time() - t_parse_start
         print(f"Time for parse_query: {timings['parse_query']:.3f} seconds")
-        
         intent = parsed_query_data.get("intent", "unknown")
         machine_id = parsed_query_data.get("machine_id")
         timestamp_info = parsed_query_data.get("timestamp") or parsed_query_data.get("timestamp_range")
         parameters = parsed_query_data.get("parameters")
+        # Ensure parameters is a dict if possible
+        if not isinstance(parameters, dict):
+            parameters = {}
         
         print(f"Parsed query intent: {intent}, Machine: {machine_id}, Time: {timestamp_info}, Params: {parameters}")
 
@@ -220,14 +198,14 @@ async def process_query_endpoint(user_query: UserQuery):
                 question_for_sql_agent = f"What were the alarms and operational status for machine {machine_id} around {timestamp_info} that might explain a stop or downtime?"
             elif intent == "fetch_oee" and machine_id and timestamp_info:
                 question_for_sql_agent = f"What was the OEE for machine {machine_id} around {timestamp_info}?"
-                if parameters and "oee_threshold" in parameters:
+                if "oee_threshold" in parameters:
                     question_for_sql_agent += f" Specifically, was it above {parameters['oee_threshold']}?"
             elif intent == "get_alarms" and machine_id and timestamp_info:
                 question_for_sql_agent = f"List alarms for machine {machine_id} around {timestamp_info}."
-                if parameters and "alarm_code" in parameters:
+                if "alarm_code" in parameters:
                      question_for_sql_agent += f" Filter by alarm code {parameters['alarm_code']}."
             elif intent == "get_hourly_data" and machine_id and timestamp_info:
-                kpi = parameters.get('kpi_name', 'all relevant KPIs') if parameters else 'all relevant KPIs'
+                kpi = parameters.get('kpi_name', 'all relevant KPIs')
                 question_for_sql_agent = f"Retrieve hourly data for machine {machine_id} concerning {kpi} on {timestamp_info}."
             elif intent in ["get_status", "get_equipment_details", "get_production_goals", "get_minute_data", "get_production_count", "summarize_production"]:
                 question_for_sql_agent = f"Regarding user query '{original_query}', provide relevant information from SQL tables. Focus on intent '{intent}'"
@@ -249,7 +227,7 @@ async def process_query_endpoint(user_query: UserQuery):
                     log_message(f"SQL Agent Result: {sql_data_str[:300]}...")
                     if sql_examples_used_info:
                         log_message(f"SQL Agent used few-shot examples: {sql_examples_used_info}")
-                    if "fault_code = 'FC-123'" in sql_data_str or (parameters and parameters.get("fault_code") == 'FC-123'):
+                    if "fault_code = 'FC-123'" in sql_data_str or ("fault_code" in parameters and parameters.get("fault_code") == 'FC-123'):
                         intermediate_data["fault_code_from_sql"] = 'FC-123'
                     elif "alarm_code: ALM001" in sql_data_str:
                         intermediate_data["fault_code_from_sql"] = 'ALM001'
@@ -272,9 +250,9 @@ async def process_query_endpoint(user_query: UserQuery):
         extracted_fault_code = intermediate_data.get("fault_code_from_sql")
         
         if not _api_forced_mock_active and \
-           (intent == "find_error_cause" or extracted_fault_code or (parameters and parameters.get("fault_code"))):
+           (intent == "find_error_cause" or extracted_fault_code or ("fault_code" in parameters and parameters.get("fault_code"))):
             
-            code_to_query = extracted_fault_code or (parameters.get("fault_code") if parameters else None)
+            code_to_query = extracted_fault_code or parameters.get("fault_code")
             
             if code_to_query:
                 cypher_query_for_kg = "MATCH (f:Fault {code: $code})-[:CAUSED_BY|LINKED_TO_RECOMMENDATION*1..2]->(related) RETURN f.code AS fault_code, related.description AS related_info, labels(related) as related_type"
@@ -328,9 +306,9 @@ async def process_query_endpoint(user_query: UserQuery):
             query_keywords_for_vector_db = [kw for kw in intent.split('_') if kw not in ["get", "fetch", "find"]]
             if machine_id: query_keywords_for_vector_db.append(machine_id)
             if parameters:
-                for k,v in parameters.items():
+                for k, v in parameters.items():
                     if isinstance(v, str): query_keywords_for_vector_db.append(v)
-                    if k in ["fault_code", "alarm_code", "kpi_name", "sensor_id"]: 
+                    if k in ["fault_code", "alarm_code", "kpi_name", "sensor_id"]:
                         if isinstance(v, str): query_keywords_for_vector_db.append(v)
             if intermediate_data.get("fault_code_from_sql"):
                 query_keywords_for_vector_db.append(intermediate_data["fault_code_from_sql"])
@@ -372,9 +350,12 @@ async def process_query_endpoint(user_query: UserQuery):
         print(f"Time for llm_interface.generate_response: {timings['llm_generate_response']:.3f} seconds")
 
         # 5. Save context to memory
+        # Ensure keys are always strings
+        input_key = user_memory.input_key if isinstance(user_memory.input_key, str) else "input"
+        output_key = user_memory.output_key if isinstance(user_memory.output_key, str) else "output"
         user_memory.save_context(
-            {user_memory.input_key: original_query}, 
-            {user_memory.output_key: final_response_text}
+            {input_key: original_query},
+            {output_key: final_response_text}
         )
         log_message(f"Saved context for user '{user_id}'.")
         

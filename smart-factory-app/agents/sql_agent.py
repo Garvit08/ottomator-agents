@@ -239,7 +239,7 @@ if __name__ == "__main__":
 
     elif not llm:
         print("SQL Agent could not be initialized because its LLM (OpenAI) is missing (OPENAI_API_KEY likely not set).")
-            print("You can test the database connection directly if needed.")
+        print("You can test the database connection directly if needed.")
 
     elif not llm:
         print("SQL Agent could not be initialized because its LLM (OpenAI) is missing (OPENAI_API_KEY likely not set).")

@@ -17,7 +17,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root) # Allows `from smart_factory_app.agents...`
 
 try:
-    from smart_factory_app.agents.sql_query_examples import SQL_QUERY_EXAMPLES
+    from sql_query_examples import SQL_QUERY_EXAMPLES
 except ImportError:
     # Fallback for direct execution if the above path adjustment isn't enough
     # or if the package structure isn't perfectly recognized.
@@ -70,7 +70,7 @@ def _extract_keywords_from_parsed_query(parsed_query: Dict[str, Any]) -> Set[str
     return keywords
 
 
-def get_relevant_sql_examples(parsed_query: Dict[str, Any], max_examples: int = 2) -> List[Dict[str, Any]]:
+def get_relevant_sql_examples(parsed_query: Dict[str, Any], max_examples: int = 2) ->  tuple: #List[Dict[str, Any]]:
     """
     Selects relevant SQL query examples based on the parsed user query.
 
@@ -83,7 +83,8 @@ def get_relevant_sql_examples(parsed_query: Dict[str, Any], max_examples: int = 
         from SQL_QUERY_EXAMPLES.
     """
     if not SQL_QUERY_EXAMPLES:
-        return []
+        return ([], set())  # Return empty list and set if no examples are available
+    
 
     scored_examples = []
     query_keywords = _extract_keywords_from_parsed_query(parsed_query)

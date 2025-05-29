@@ -1,5 +1,6 @@
 import os
 import sys
+from typing import Optional
 import chromadb
 from sentence_transformers import SentenceTransformer
 import numpy as np
@@ -12,7 +13,7 @@ if project_root_vector_agent not in sys.path:
     sys.path.insert(0, os.path.dirname(project_root_vector_agent))
 
 try:
-    from smart_factory_app.config.config import (
+    from config.config import (
         SENTENCE_TRANSFORMER_MODEL, 
         CHROMA_PERSIST_PATH, 
         VECTOR_COLLECTION_NAME
@@ -95,14 +96,14 @@ class VectorAgent:
             self.collection.add(
                 embeddings=embeddings,
                 documents=texts, # Store the original texts
-                metadatas=metadatas,
+                metadatas=metadatas, # type: ignore
                 ids=ids
             )
             print(f"Successfully added {len(texts)} items to the collection.")
         except Exception as e:
             print(f"Error adding texts to ChromaDB: {e}")
 
-    def semantic_search(self, query_text: str, n_results: int = 5, where_filter: dict = None):
+    def semantic_search(self, query_text: str, n_results: int = 5, where_filter: dict = None): # type: ignore
         """
         Performs semantic search in ChromaDB.
         - Generates embedding for the query text.
@@ -126,7 +127,7 @@ class VectorAgent:
             print(f"Error during semantic search: {e}")
             return None
 
-    def keyword_search(self, keywords: list[str], n_results: int = 5, where_filter: dict = None):
+    def keyword_search(self, keywords: list[str], n_results: int = 5, where_filter: dict = None): # type: ignore
         """
         Performs a basic keyword search.
         This is a placeholder and can be improved with more sophisticated methods.
