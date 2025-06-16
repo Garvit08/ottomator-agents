@@ -17,7 +17,7 @@ except ImportError:
     # print("Ollama or ChatOllama not found. Using MockOllama for LLM interactions.")
 
 try:
-    from config.config import (
+    from smart_factory_app.config.config import (
         OLLAMA_MODEL, 
         OLLAMA_BASE_URL,
         PARSE_QUERY_PROMPT_FILE,
@@ -41,9 +41,7 @@ def load_prompt_template(file_path: str) -> Optional[str]:
         if not os.path.isabs(file_path):
              # This case should ideally not be hit if config.py sets up absolute paths.
              # If it's relative, it's assumed relative to the project root (smart_factory_app_dir_llm)
-            smart_factory_app_dir_llm = os.path.join(os.path.dirname(os.path.abspath(__file__)))
-             # Directory of this script
-            file_path = os.path.join(smart_factory_app_dir_llm, file_path)
+             file_path = os.path.join(smart_factory_app_dir_llm, file_path)
 
         with open(file_path, 'r') as f:
             return f.read()
@@ -125,8 +123,8 @@ class MockOllama:
                  return json.dumps({
                     "intent": "get_equipment_details",
                     "machine_id": "EQP-101",
-                    "timestamp": None, # JSON null
-                    "parameters": None
+                    "timestamp": null, # JSON null
+                    "parameters": null
                 })
             elif "temperature for sensor s1 on machine mtr-5" in prompt.lower():
                 return json.dumps({
@@ -219,7 +217,7 @@ class LLMInterface:
                 print(f"LLMInterface: Initializing basic Ollama for text generation with model: {self.model_name}, base_url: {self.base_url}")
                 self.basic_llm = Ollama(model=self.model_name, base_url=self.base_url)
                 # Test basic_llm (optional)
-                # test_response = self.basic_llm.invoke("Hi") 
+                # test_response = self.basic_llm.invoke("Hi")
                 # print(f"LLMInterface: Basic Ollama test response: '{test_response[:50]}...'")
                 print("LLMInterface: Basic Ollama for text generation initialized successfully.")
 
@@ -244,7 +242,7 @@ class LLMInterface:
         
         try:
             full_prompt_str = self.parse_query_prompt_template.format(
-                user_query=user_query, 
+                user_query=user_query,
                 chat_history=chat_history if chat_history else "No history available."
             )
             # Remove the final "JSON Output: ..." guidance from the prompt if it exists,
@@ -267,7 +265,7 @@ class LLMInterface:
             except Exception as e:
                 print(f"LLMInterface: Error invoking LLM with structured output: {e}. Falling back.")
                 # Fallback path below will be used.
-        
+
         # Fallback or Mock path (uses basic_llm which might be MockOllama or basic Ollama)
         print(f"LLMInterface: Using fallback/mock path for parse_query for query: {user_query[:50]}...")
         try:
@@ -275,12 +273,12 @@ class LLMInterface:
             # This means the original prompt with "JSON Output:" might be better here for the fallback.
             # Re-format with the original template if it was modified.
             fallback_prompt = self.parse_query_prompt_template.format(
-                user_query=user_query, 
+                user_query=user_query,
                 chat_history=chat_history if chat_history else "No history available."
             )
 
             response_str = self.basic_llm.invoke(fallback_prompt)
-            
+
             if "```json" in response_str:
                 response_str = response_str.split("```json")[1].split("```")[0].strip()
             elif "```" in response_str:
@@ -301,11 +299,11 @@ class LLMInterface:
                 validated_response["machine_id"] = [validated_response["machine_id"]]
             
             return validated_response
-            
+
         except json.JSONDecodeError as e_json:
             print(f"LLMInterface (fallback/mock): Error parsing JSON response: {e_json}")
             print(f"LLMInterface (fallback/mock): Raw Response was: {response_str if 'response_str' in locals() else 'N/A'}")
-            return default_response 
+            return default_response
         except Exception as e_gen:
             print(f"LLMInterface (fallback/mock): Error invoking LLM or processing response: {e_gen}")
             return default_response

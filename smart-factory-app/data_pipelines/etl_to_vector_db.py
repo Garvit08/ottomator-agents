@@ -7,8 +7,8 @@ from datetime import datetime, timedelta
 
 # --- Import VectorAgent and Configuration ---
 try:
-    from agents.vector_agent import VectorAgent
-    from config.config import DATABASE_URI, ETL_USE_MOCK_DB, TABLE_CONFIGS
+    from smart_factory_app.agents.vector_agent import VectorAgent
+    from smart_factory_app.config.config import DATABASE_URI, ETL_USE_MOCK_DB, TABLE_CONFIGS
     CONFIG_LOADED = True
 except ImportError as e:
     print(f"Error importing VectorAgent or config: {e}. Using fallback configurations.")

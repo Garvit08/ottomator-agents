@@ -153,7 +153,7 @@ def run_sql_query(natural_language_query: str, parsed_query_dict: Optional[Dict[
         result = agent_executor.run(augmented_query)
         agent_run_duration = time.time() - agent_run_start_time
         print(f"Time for agent_executor.run: {agent_run_duration:.3f} seconds")
-        
+
         total_function_duration = time.time() - total_function_start_time
         print(f"Total time for run_sql_query function: {total_function_duration:.3f} seconds")
         return str(result), selected_example_info
@@ -162,7 +162,7 @@ def run_sql_query(natural_language_query: str, parsed_query_dict: Optional[Dict[
         if 'agent_run_start_time' in locals() and 'agent_run_duration' not in locals():
             agent_run_duration = time.time() - agent_run_start_time
             print(f"Time for agent_executor.run (until error): {agent_run_duration:.3f} seconds")
-        
+
         total_function_duration = time.time() - total_function_start_time
         print(f"Total time for run_sql_query function (until error): {total_function_duration:.3f} seconds")
         return f"Error running SQL query: {e}", selected_example_info
@@ -239,7 +239,7 @@ if __name__ == "__main__":
 
     elif not llm:
         print("SQL Agent could not be initialized because its LLM (OpenAI) is missing (OPENAI_API_KEY likely not set).")
-        print("You can test the database connection directly if needed.")
+            print("You can test the database connection directly if needed.")
 
     elif not llm:
         print("SQL Agent could not be initialized because its LLM (OpenAI) is missing (OPENAI_API_KEY likely not set).")
