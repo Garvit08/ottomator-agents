@@ -1,0 +1,52 @@
+[
+    {
+        "id": "ts_example_1_oee",
+        "nl_query": "What was the average OEE for equipment 'EQP-001' on product 'PROD_A' during shift 'SHIFT_MORNING' yesterday?",
+        "sql_query": "SELECT oee_percentage FROM realtime_oee WHERE equipment_id = 'EQP-001' AND product_id = 'PROD_A' AND shift_id = 'SHIFT_MORNING' AND hour_bucket >= date_trunc('day', CURRENT_DATE - INTERVAL '1 day') AND hour_bucket < date_trunc('day', CURRENT_DATE) ORDER BY hour_bucket DESC LIMIT 1;",
+        "description": "Fetches OEE percentage from the realtime_oee view for a specific equipment, product, and shift for the previous day. (TimescaleDB)",
+        "keywords": ["OEE", "equipment", "product", "shift", "yesterday", "TimescaleDB"],
+        "intent": "get_oee",
+        "tables_involved": ["realtime_oee"],
+        "complexity": "medium_view_filter_date"
+    },
+    {
+        "id": "ts_example_2_raw_hypertable",
+        "nl_query": "Show me the 'part_count' and its 'goal_value' for machine 'EQP-002', product 'PROD_B', shift 'SHIFT_NOON' in the last 2 hours.",
+        "sql_query": "SELECT timestamp, metric_value AS part_count, goal_value FROM equipment_data_minute WHERE equipment_id = 'EQP-002' AND product_id = 'PROD_B' AND shift_id = 'SHIFT_NOON' AND metric_key = 'part_count' AND timestamp >= NOW() - INTERVAL '2 hours' ORDER BY timestamp DESC;",
+        "description": "Retrieves raw part count and goal values from the equipment_data_minute hypertable for specific equipment, product, and shift within a recent time window. (TimescaleDB)",
+        "keywords": ["part count", "goal value", "machine", "product", "shift", "last 2 hours", "TimescaleDB"],
+        "intent": "get_metric_data",
+        "tables_involved": ["equipment_data_minute"],
+        "complexity": "simple_hypertable_filter_time"
+    },
+    {
+        "id": "ts_example_3_status_aggregate",
+        "nl_query": "How many times did equipment 'EQP-003' change to status code 'FAULT_101' yesterday?",
+        "sql_query": "SELECT status_changes FROM equipment_status_daily WHERE equipment_id = 'EQP-003' AND code = 'FAULT_101' AND bucket = date_trunc('day', CURRENT_DATE - INTERVAL '1 day');",
+        "description": "Counts status changes for a specific equipment and status code on the previous day using the daily status aggregate. (TimescaleDB)",
+        "keywords": ["status changes", "equipment", "status code", "yesterday", "TimescaleDB"],
+        "intent": "count_status_changes",
+        "tables_involved": ["equipment_status_daily"],
+        "complexity": "simple_aggregate_filter_date"
+    },
+    {
+        "id": "ts_example_4_latest_readings",
+        "nl_query": "What are the latest 'temperature' and 'pressure' readings for 'EQP-001'?",
+        "sql_query": "SELECT metric_key, timestamp, metric_value, metric_unit FROM latest_equipment_readings WHERE equipment_id = 'EQP-001' AND metric_key IN ('temperature', 'pressure');",
+        "description": "Fetches the most recent temperature and pressure readings for a specific equipment using the latest_equipment_readings view. (TimescaleDB)",
+        "keywords": ["latest readings", "temperature", "pressure", "equipment", "TimescaleDB"],
+        "intent": "get_latest_readings",
+        "tables_involved": ["latest_equipment_readings"],
+        "complexity": "simple_view_filter_in"
+    },
+    {
+        "id": "ts_example_5_downtime_category",
+        "nl_query": "List all equipment that were in a 'DOWNTIME' category status in the last hour.",
+        "sql_query": "SELECT DISTINCT es.equipment_id, es.status, es.code, es.timestamp FROM equipment_status es JOIN equipment_status_master esm ON es.code = esm.code WHERE esm.category = 'DOWNTIME' AND es.timestamp >= NOW() - INTERVAL '1 hour' ORDER BY es.timestamp DESC;",
+        "description": "Identifies equipment that experienced any status categorized as 'DOWNTIME' in the last hour by joining with the status master table. (TimescaleDB)",
+        "keywords": ["downtime", "equipment", "last hour", "status category", "TimescaleDB"],
+        "intent": "get_downtime_equipment",
+        "tables_involved": ["equipment_status", "equipment_status_master"],
+        "complexity": "medium_join_filter_time_category"
+    }
+]
