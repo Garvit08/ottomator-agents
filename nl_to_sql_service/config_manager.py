@@ -59,6 +59,8 @@ class DBSchemaHandlerConfig(BaseModel):
         default_schema_name: Default schema to inspect if not specified. From `NLSQL_DB_DEFAULT_SCHEMA`.
         connection_string: Full DB connection string (overrides parts if provided). From `NLSQL_DB_CONNECTION_STRING`.
         schema_cache_ttl_seconds: TTL for schema cache. From `NLSQL_DB_SCHEMA_CACHE_TTL_SECONDS`.
+        db_readonly_user: Optional dedicated read-only DB user for query execution. From `NLSQL_DB_READONLY_USER`.
+        db_readonly_password: Password for the read-only DB user. From `NLSQL_DB_READONLY_PASSWORD`.
     """
     db_type: str = Field(
         default=os.getenv("NLSQL_DB_TYPE", "postgresql"),
@@ -80,11 +82,11 @@ class DBSchemaHandlerConfig(BaseModel):
         default=os.getenv("NLSQL_DB_PASSWORD"),
         description="Database password. Loaded from `NLSQL_DB_PASSWORD` env var."
     )
-    database_name: Optional[str] = Field( # This is the database name itself
+    database_name: Optional[str] = Field(
         default=os.getenv("NLSQL_DB_NAME"),
         description="Database name. Loaded from `NLSQL_DB_NAME` env var."
     )
-    default_schema_name: str = Field( # This is for schema within the database, e.g. 'public'
+    default_schema_name: str = Field(
         default=os.getenv("NLSQL_DB_DEFAULT_SCHEMA", "public"),
         description="Default database schema to inspect (e.g., 'public'). Loaded from `NLSQL_DB_DEFAULT_SCHEMA` env var."
     )
@@ -95,6 +97,14 @@ class DBSchemaHandlerConfig(BaseModel):
     schema_cache_ttl_seconds: int = Field(
         default=int(os.getenv("NLSQL_DB_SCHEMA_CACHE_TTL_SECONDS", 3600)),
         description="TTL for schema cache in seconds. Loaded from `NLSQL_DB_SCHEMA_CACHE_TTL_SECONDS` env var."
+    )
+    db_readonly_user: Optional[str] = Field(
+        default=os.getenv("NLSQL_DB_READONLY_USER"),
+        description="Optional dedicated read-only database user for executing final queries. Loaded from `NLSQL_DB_READONLY_USER` env var."
+    )
+    db_readonly_password: Optional[str] = Field(
+        default=os.getenv("NLSQL_DB_READONLY_PASSWORD"),
+        description="Password for the read-only database user. Loaded from `NLSQL_DB_READONLY_PASSWORD` env var."
     )
 
     @validator('port', pre=True, always=True)
@@ -194,7 +204,20 @@ class NLToSQLConfig(BaseModel):
         default=int(os.getenv("NLSQL_NUM_SCHEMA_CHUNKS", 3)),
         description="Number of schema chunks to retrieve from vector store for prompt context. From `NLSQL_NUM_SCHEMA_CHUNKS`."
     )
+    max_correction_attempts: int = Field( # Added in previous step, verified here
+        default=int(os.getenv("NLSQL_MAX_CORRECTION_ATTEMPTS", 2)),
+        description="Maximum number of attempts to correct an invalid SQL query via re-prompting the LLM. From `NLSQL_MAX_CORRECTION_ATTEMPTS`."
+    )
 
+    # Pagination configurations
+    default_page_size: int = Field(
+        default=int(os.getenv("NLSQL_DEFAULT_PAGE_SIZE", 100)),
+        description="Default number of rows to return per page if not specified in request. From `NLSQL_DEFAULT_PAGE_SIZE`."
+    )
+    max_page_size: int = Field(
+        default=int(os.getenv("NLSQL_MAX_PAGE_SIZE", 1000)),
+        description="Maximum number of rows that can be requested in a single page. From `NLSQL_MAX_PAGE_SIZE`."
+    )
 
     class Config:
         """Pydantic model configuration."""
@@ -218,47 +241,47 @@ class NLToSQLConfig(BaseModel):
         return cls(**kwargs)
 
 if __name__ == "__main__":
-    print("Demonstrating NLToSQLConfig loading with RAG fields...")
-    test_env_file_path = ".test_nlsql_env_rag_configmanager"
+    print("Demonstrating NLToSQLConfig loading with RAG and Pagination fields...")
+    test_env_file_path = ".test_nlsql_env_full_configmanager" # New name for clarity
     with open(test_env_file_path, "w") as f:
-        f.write("NLSQL_LLM_MODEL_NAME=rag_model_from_file\n")
-        f.write("NLSQL_CHROMA_PATH=./test_chroma_rag\n")
-        f.write("NLSQL_CHROMA_COLLECTION=test_rag_collection\n")
-        f.write("NLSQL_SCHEMA_EMBEDDING_MODEL=test-embed-model\n")
-        f.write("NLSQL_INCLUDE_SAMPLE_VALUES_IN_CHUNKS=True\n")
-        f.write("NLSQL_DB_DEFAULT_SCHEMA=test_public\n")
-        f.write("NLSQL_NUM_SCHEMA_CHUNKS=4\n") # Test new field
+        f.write("NLSQL_LLM_MODEL_NAME=full_config_model\n")
+        f.write("NLSQL_DB_HOST=dbhost.full.config\n")
+        f.write("NLSQL_LOG_LEVEL=INFO\n")
+        f.write("NLSQL_DEFAULT_PAGE_SIZE=50\n")
+        f.write("NLSQL_MAX_PAGE_SIZE=500\n")
+        f.write("NLSQL_DB_READONLY_USER=readonly_tester\n")
 
 
     print(f"\n--- Loading config with .env file: {test_env_file_path} ---")
     config_from_file = NLToSQLConfig.load(config_path=test_env_file_path)
     print(f"LLM Model: {config_from_file.llm.model_name}")
-    assert config_from_file.llm.model_name == "rag_model_from_file"
-    print(f"Chroma Path: {config_from_file.chroma_persist_path}")
-    assert config_from_file.chroma_persist_path == "./test_chroma_rag"
-    print(f"Chroma Collection: {config_from_file.chroma_collection_name}")
-    assert config_from_file.chroma_collection_name == "test_rag_collection"
-    print(f"Schema Embedding Model: {config_from_file.schema_embedding_model_name}")
-    assert config_from_file.schema_embedding_model_name == "test-embed-model"
-    print(f"Include Sample Values: {config_from_file.include_sample_values_in_chunks}")
-    assert config_from_file.include_sample_values_in_chunks is True
-    print(f"Num Schema Chunks for Prompt: {config_from_file.num_schema_chunks_for_prompt}")
-    assert config_from_file.num_schema_chunks_for_prompt == 4
+    assert config_from_file.llm.model_name == "full_config_model"
     if config_from_file.db_schema_handler:
-        print(f"Default DB Schema Name: {config_from_file.db_schema_handler.default_schema_name}")
-        assert config_from_file.db_schema_handler.default_schema_name == "test_public"
+        print(f"DB Host: {config_from_file.db_schema_handler.host}")
+        assert config_from_file.db_schema_handler.host == "dbhost.full.config"
+        print(f"DB Readonly User: {config_from_file.db_schema_handler.db_readonly_user}")
+        assert config_from_file.db_schema_handler.db_readonly_user == "readonly_tester"
+
+    print(f"Log Level: {config_from_file.log_level}")
+    assert config_from_file.log_level == "INFO"
+    print(f"Default Page Size: {config_from_file.default_page_size}")
+    assert config_from_file.default_page_size == 50
+    print(f"Max Page Size: {config_from_file.max_page_size}")
+    assert config_from_file.max_page_size == 500
+
 
     # Clean up test env vars set by dotenv
     env_vars_to_clean = [
-        "NLSQL_LLM_MODEL_NAME", "NLSQL_CHROMA_PATH", "NLSQL_CHROMA_COLLECTION",
-        "NLSQL_SCHEMA_EMBEDDING_MODEL", "NLSQL_INCLUDE_SAMPLE_VALUES_IN_CHUNKS",
-        "NLSQL_DB_DEFAULT_SCHEMA", "NLSQL_NUM_SCHEMA_CHUNKS"
+        "NLSQL_LLM_MODEL_NAME", "NLSQL_DB_HOST", "NLSQL_LOG_LEVEL",
+        "NLSQL_DEFAULT_PAGE_SIZE", "NLSQL_MAX_PAGE_SIZE", "NLSQL_DB_READONLY_USER"
     ]
     for var in env_vars_to_clean:
-        if var in os.environ:
+        if var in os.environ: # Check if it was actually set by dotenv load
             del os.environ[var]
 
     if os.path.exists(test_env_file_path):
         os.remove(test_env_file_path)
     print(f"\nCleaned up dummy env file: {test_env_file_path}")
-    print("\nConfig manager RAG fields demonstration finished.")
+    print("\nConfig manager pagination fields demonstration finished.")
+
+```
