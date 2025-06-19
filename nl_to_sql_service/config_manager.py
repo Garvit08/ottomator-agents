@@ -1,183 +1,264 @@
 # nl_to_sql_service/config_manager.py
+"""Configuration management for the NL-to-SQL service.
+
+This module defines Pydantic models for managing all configurations required
+by the NL-to-SQL service. It allows loading settings from environment
+variables, with sensible defaults, and supports nested configuration structures
+for better organization (e.g., LLM settings, Database schema handler settings).
+"""
 import os
 from typing import Optional, Dict, Any, List
 from pydantic import BaseModel, Field, validator
 
 class LLMConfig(BaseModel):
-    """Configuration specific to the Language Model."""
-    # In a real scenario, you might have different LLM types (OpenAI, Ollama, AzureOpenAI etc.)
-    # For now, assuming Ollama-like setup but can be made more generic.
-    model_provider: str = Field(default=os.getenv("NLSQL_LLM_PROVIDER", "ollama"), description="LLM provider (e.g., 'ollama', 'openai').")
-    model_name: str = Field(default=os.getenv("NLSQL_LLM_MODEL_NAME", "mistral"), description="The specific model name.")
-    base_url: Optional[str] = Field(default=os.getenv("NLSQL_LLM_BASE_URL", "http://localhost:11434"), description="Base URL for the LLM API (e.g., Ollama).")
-    api_key: Optional[str] = Field(default=os.getenv("NLSQL_LLM_API_KEY"), description="API key for the LLM service, if required.")
-    temperature: float = Field(default=float(os.getenv("NLSQL_LLM_TEMPERATURE", 0.0)), description="LLM temperature for generation.")
-    # Add other LLM parameters like max_tokens, top_p if needed
+    """Configuration specific to the Language Model used by the NL-to-SQL service.
 
-class DBSchemaHandlerConfig(BaseModel):
-    """Configuration for the DBSchemaHandler."""
-    db_type: str = Field(default=os.getenv("NLSQL_DB_TYPE", "postgresql"), description="Database type (e.g., postgresql, mysql).")
-    host: Optional[str] = Field(default=os.getenv("NLSQL_DB_HOST"), description="Database host.")
-    port: Optional[int] = Field(default=None, description="Database port.") # Default to None, validator handles conversion
-    username: Optional[str] = Field(default=os.getenv("NLSQL_DB_USER"), description="Database username.")
-    password: Optional[str] = Field(default=os.getenv("NLSQL_DB_PASSWORD"), description="Database password.")
-    database_name: Optional[str] = Field(default=os.getenv("NLSQL_DB_NAME"), description="Database name.")
-    connection_string: Optional[str] = Field(default=os.getenv("NLSQL_DB_CONNECTION_STRING"), description="Full database connection string (overrides individual components if provided).")
-    schema_cache_ttl_seconds: int = Field(default=int(os.getenv("NLSQL_DB_SCHEMA_CACHE_TTL_SECONDS", 3600)), description="TTL for schema cache in seconds.")
-
-    @validator('port', pre=True, always=True)
-    def _validate_port(cls, v: Any) -> Optional[int]:
-        if v is None or v == '':
-            # Fallback to default port based on db_type if specific logic is desired here,
-            # or keep None if it should be explicitly provided or derived later.
-            # For now, if not provided or empty, it remains None.
-            # Pydantic v2 might handle int(None) differently, ensure compatibility or specific handling.
-            # os.getenv("NLSQL_DB_PORT", 5432 if some_condition else None)
-            # The default in Field was `int(os.getenv("NLSQL_DB_PORT", 5432)) if os.getenv("NLSQL_DB_PORT") else None`
-            # This validator is more robust for various inputs.
-            default_port_str = os.getenv("NLSQL_DB_PORT")
-            if default_port_str is None or default_port_str == '': # If env var is not set or empty
-                 # One could set a default based on db_type here, e.g.
-                 # values = cls.model_fields # Pydantic v2 way to get other field values if needed
-                 # db_type = values.get('db_type')
-                 # if db_type == 'postgresql': return 5432
-                 return None # Default to None if not set
-            v = default_port_str
-
-        try:
-            return int(v)
-        except ValueError:
-            raise ValueError(f"Database port must be an integer or None. Received: {v}")
-
-class NLToSQLConfig(BaseModel):
+    Attributes:
+        model_provider: The provider of the LLM (e.g., 'ollama', 'openai').
+                        Loaded from `NLSQL_LLM_PROVIDER` env var, defaults to 'ollama'.
+        model_name: The specific model name to be used (e.g., 'mistral', 'gpt-3.5-turbo').
+                    Loaded from `NLSQL_LLM_MODEL_NAME` env var, defaults to 'mistral'.
+        base_url: The base URL for the LLM API. Relevant for self-hosted models like Ollama.
+                  Loaded from `NLSQL_LLM_BASE_URL` env var, defaults to 'http://localhost:11434'.
+        api_key: API key for the LLM service, if required (e.g., for OpenAI).
+                 Loaded from `NLSQL_LLM_API_KEY` env var, defaults to None.
+        temperature: The temperature setting for LLM generation, controlling randomness.
+                     Loaded from `NLSQL_LLM_TEMPERATURE` env var, defaults to 0.0.
     """
-    Main configuration model for the NL-to-SQL Service.
-    Loads settings from environment variables with sensible defaults.
-    """
-    llm: LLMConfig = Field(default_factory=LLMConfig)
-
-    few_shot_examples_path: str = Field(default=os.getenv("NLSQL_FEW_SHOT_PATH", "nl_to_sql_examples.json"), description="Path to the JSON file containing few-shot examples.")
-    num_few_shot_examples_to_select: int = Field(default=int(os.getenv("NLSQL_NUM_FEW_SHOTS", 3)), description="Number of few-shot examples to select for the prompt.")
-    few_shot_selection_strategy: str = Field(default=os.getenv("NLSQL_FEW_SHOT_STRATEGY", "hybrid"), description="Strategy for selecting few-shot examples (e.g., 'random', 'keyword', 'semantic', 'hybrid').")
-    few_shot_embedding_model: Optional[str] = Field(default=os.getenv("NLSQL_FEW_SHOT_EMBEDDING_MODEL", "all-MiniLM-L6-v2"), description="Sentence transformer model for semantic selection of few-shot examples.")
-
-    use_dynamic_schema_handling: bool = Field(default=os.getenv("NLSQL_USE_DYNAMIC_SCHEMA", "True").lower() == "true", description="Whether to use DBSchemaHandler for dynamic schema.")
-    db_schema_handler: Optional[DBSchemaHandlerConfig] = Field(default_factory=DBSchemaHandlerConfig)
-
-    schema_representation_mode: str = Field(default=os.getenv("NLSQL_SCHEMA_REPR_MODE", "create_table"), description="Mode for schema representation to LLM ('create_table', 'column_list', 'summarized_text').")
-    base_prompt_template_path: str = Field(
-        default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "prompts", "base_nl_to_sql_prompt.txt"),
-        description="Path to the base prompt template file, relative to this config file's directory if not absolute."
+    model_provider: str = Field(
+        default=os.getenv("NLSQL_LLM_PROVIDER", "ollama"),
+        description="LLM provider (e.g., 'ollama', 'openai'). Loaded from `NLSQL_LLM_PROVIDER` env var."
+    )
+    model_name: str = Field(
+        default=os.getenv("NLSQL_LLM_MODEL_NAME", "mistral"),
+        description="The specific model name. Loaded from `NLSQL_LLM_MODEL_NAME` env var."
+    )
+    base_url: Optional[str] = Field(
+        default=os.getenv("NLSQL_LLM_BASE_URL", "http://localhost:11434"),
+        description="Base URL for the LLM API (e.g., Ollama). Loaded from `NLSQL_LLM_BASE_URL` env var."
+    )
+    api_key: Optional[str] = Field(
+        default=os.getenv("NLSQL_LLM_API_KEY"),
+        description="API key for the LLM service, if required. Loaded from `NLSQL_LLM_API_KEY` env var."
+    )
+    temperature: float = Field(
+        default=float(os.getenv("NLSQL_LLM_TEMPERATURE", 0.0)),
+        description="LLM temperature for generation. Loaded from `NLSQL_LLM_TEMPERATURE` env var."
     )
 
-    log_level: str = Field(default=os.getenv("NLSQL_LOG_LEVEL", "INFO").upper(), description="Logging level (e.g., DEBUG, INFO, WARNING, ERROR).")
+class DBSchemaHandlerConfig(BaseModel):
+    """Configuration for the DBSchemaHandler, managing database connection and schema retrieval.
+
+    Attributes:
+        db_type: Database type (e.g., 'postgresql', 'mysql'). From `NLSQL_DB_TYPE`.
+        host: Database host. From `NLSQL_DB_HOST`.
+        port: Database port. From `NLSQL_DB_PORT`.
+        username: Database username. From `NLSQL_DB_USER`.
+        password: Database password. From `NLSQL_DB_PASSWORD`.
+        database_name: Database name. From `NLSQL_DB_NAME`.
+        default_schema_name: Default schema to inspect if not specified. From `NLSQL_DB_DEFAULT_SCHEMA`.
+        connection_string: Full DB connection string (overrides parts if provided). From `NLSQL_DB_CONNECTION_STRING`.
+        schema_cache_ttl_seconds: TTL for schema cache. From `NLSQL_DB_SCHEMA_CACHE_TTL_SECONDS`.
+    """
+    db_type: str = Field(
+        default=os.getenv("NLSQL_DB_TYPE", "postgresql"),
+        description="Database type (e.g., postgresql, mysql). Loaded from `NLSQL_DB_TYPE` env var."
+    )
+    host: Optional[str] = Field(
+        default=os.getenv("NLSQL_DB_HOST"),
+        description="Database host. Loaded from `NLSQL_DB_HOST` env var."
+    )
+    port: Optional[int] = Field(
+        default=None,
+        description="Database port. Loaded from `NLSQL_DB_PORT` env var."
+    )
+    username: Optional[str] = Field(
+        default=os.getenv("NLSQL_DB_USER"),
+        description="Database username. Loaded from `NLSQL_DB_USER` env var."
+    )
+    password: Optional[str] = Field(
+        default=os.getenv("NLSQL_DB_PASSWORD"),
+        description="Database password. Loaded from `NLSQL_DB_PASSWORD` env var."
+    )
+    database_name: Optional[str] = Field( # This is the database name itself
+        default=os.getenv("NLSQL_DB_NAME"),
+        description="Database name. Loaded from `NLSQL_DB_NAME` env var."
+    )
+    default_schema_name: str = Field( # This is for schema within the database, e.g. 'public'
+        default=os.getenv("NLSQL_DB_DEFAULT_SCHEMA", "public"),
+        description="Default database schema to inspect (e.g., 'public'). Loaded from `NLSQL_DB_DEFAULT_SCHEMA` env var."
+    )
+    connection_string: Optional[str] = Field(
+        default=os.getenv("NLSQL_DB_CONNECTION_STRING"),
+        description="Full database connection string (overrides individual components if provided). Loaded from `NLSQL_DB_CONNECTION_STRING` env var."
+    )
+    schema_cache_ttl_seconds: int = Field(
+        default=int(os.getenv("NLSQL_DB_SCHEMA_CACHE_TTL_SECONDS", 3600)),
+        description="TTL for schema cache in seconds. Loaded from `NLSQL_DB_SCHEMA_CACHE_TTL_SECONDS` env var."
+    )
+
+    @validator('port', pre=True, always=True)
+    def _validate_port(cls, v: Any, values: Dict[str, Any]) -> Optional[int]:
+        """Validator for the database port."""
+        env_port = os.getenv("NLSQL_DB_PORT")
+        effective_value = v if v is not None else env_port
+        if effective_value is None or str(effective_value).strip() == '':
+            return None
+        try:
+            return int(effective_value)
+        except ValueError:
+            raise ValueError(f"Database port must be an integer or None. Received: '{effective_value}'")
+
+class NLToSQLConfig(BaseModel):
+    """Main configuration model for the NL-to-SQL Service."""
+    llm: LLMConfig = Field(default_factory=LLMConfig, description="LLM configuration.")
+
+    few_shot_examples_path: str = Field(
+        default=os.getenv("NLSQL_FEW_SHOT_PATH", "nl_to_sql_examples.json"),
+        description="Path to few-shot examples JSON file. From `NLSQL_FEW_SHOT_PATH`."
+    )
+    num_few_shot_examples_to_select: int = Field(
+        default=int(os.getenv("NLSQL_NUM_FEW_SHOTS", 3)),
+        description="Number of few-shot examples for prompts. From `NLSQL_NUM_FEW_SHOTS`."
+    )
+    few_shot_selection_strategy: str = Field(
+        default=os.getenv("NLSQL_FEW_SHOT_STRATEGY", "hybrid"),
+        description="Few-shot selection strategy. From `NLSQL_FEW_SHOT_STRATEGY`."
+    )
+    few_shot_embedding_model: Optional[str] = Field(
+        default=os.getenv("NLSQL_FEW_SHOT_EMBEDDING_MODEL", "all-MiniLM-L6-v2"),
+        description="Embedding model for few-shot semantic selection. From `NLSQL_FEW_SHOT_EMBEDDING_MODEL`."
+    )
+
+    use_dynamic_schema_handling: bool = Field(
+        default=os.getenv("NLSQL_USE_DYNAMIC_SCHEMA", "True").lower() == "true",
+        description="Use DBSchemaHandler for dynamic schema. From `NLSQL_USE_DYNAMIC_SCHEMA`."
+    )
+    db_schema_handler: Optional[DBSchemaHandlerConfig] = Field(
+        default_factory=DBSchemaHandlerConfig,
+        description="DBSchemaHandler configuration."
+    )
+
+    schema_representation_mode: str = Field(
+        default=os.getenv("NLSQL_SCHEMA_REPR_MODE", "create_table"),
+        description="Schema representation mode for LLM. From `NLSQL_SCHEMA_REPR_MODE`."
+    )
+    base_prompt_template_path: str = Field(
+        default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "prompts", "base_nl_to_sql_prompt.txt"),
+        description="Path to base prompt template. From `NLSQL_PROMPT_TEMPLATE_PATH`."
+    )
+
+    log_level: str = Field(
+        default=os.getenv("NLSQL_LOG_LEVEL", "INFO").upper(),
+        description="Logging level. From `NLSQL_LOG_LEVEL`."
+    )
 
     disallowed_sql_keywords: List[str] = Field(
         default_factory=lambda: [
             kw.strip().upper() for kw in os.getenv(
                 "NLSQL_DISALLOWED_KEYWORDS",
                 "INSERT,UPDATE,DELETE,DROP,TRUNCATE,ALTER,CREATE USER,GRANT,REVOKE"
-            ).split(',') if kw.strip() # Ensure not empty string after strip
+            ).split(',') if kw.strip()
         ],
-        description="SQL keywords that should be disallowed in generated queries."
+        description="Disallowed SQL keywords (uppercase, comma-separated). From `NLSQL_DISALLOWED_KEYWORDS`."
     )
 
-    class Config:
-        # For Pydantic v1, env_prefix was for loading from env vars with a prefix.
-        # For Pydantic v2 with pydantic-settings, behavior is slightly different.
-        # The current Field(default=os.getenv(...)) pattern directly reads env vars.
-        # If using pydantic-settings for .env file loading:
-        # env_file = ".env"
-        # env_file_encoding = 'utf-8'
-        # extra = 'ignore' # Ignore extra fields from env vars or dicts
-        # For Pydantic v1 'Config' inner class, these are standard options:
-        env_prefix = 'NLSQL_' # This would make Pydantic try to load NLSQL_LLM_MODEL_NAME etc.
-                             # but Field(default=os.getenv()) is more explicit.
-                             # If we use env_prefix, then Field defaults should not include os.getenv.
-                             # For clarity and direct control, os.getenv in Field is fine.
-                             # If pydantic-settings is used, then env_prefix and env_file are more integrated.
-                             # Let's remove env_prefix to rely on explicit os.getenv in Field defaults.
-        validate_assignment = True # Ensure validation runs when fields are assigned after init
-        extra = 'ignore'
+    error_string_for_no_conversion: str = Field(
+        default=os.getenv("NLSQL_ERROR_STRING_NO_CONVERSION", "ERROR: Cannot convert query due to ambiguity or missing schema information."),
+        description="LLM's expected error string for non-conversion. From `NLSQL_ERROR_STRING_NO_CONVERSION`."
+    )
 
+    remove_trailing_semicolon: bool = Field(
+        default=os.getenv("NLSQL_REMOVE_TRAILING_SEMICOLON", "True").lower() == "true",
+        description="Remove trailing semicolon from generated SQL. From `NLSQL_REMOVE_TRAILING_SEMICOLON`."
+    )
+
+    # RAG specific configurations
+    chroma_persist_path: str = Field(
+        default=os.getenv("NLSQL_CHROMA_PATH", "./chroma_db_store_nlsql"),
+        description="Path for ChromaDB persistent storage for schema embeddings. From `NLSQL_CHROMA_PATH`."
+    )
+    chroma_collection_name: str = Field(
+        default=os.getenv("NLSQL_CHROMA_COLLECTION", "nlsql_schema_embeddings"),
+        description="ChromaDB collection name for schema embeddings. From `NLSQL_CHROMA_COLLECTION`."
+    )
+    schema_embedding_model_name: str = Field(
+        default=os.getenv("NLSQL_SCHEMA_EMBEDDING_MODEL", "all-MiniLM-L6-v2"),
+        description="Sentence transformer model for embedding schema chunks. From `NLSQL_SCHEMA_EMBEDDING_MODEL`."
+    )
+    include_sample_values_in_chunks: bool = Field(
+        default=os.getenv("NLSQL_INCLUDE_SAMPLE_VALUES_IN_CHUNKS", "False").lower() == "true",
+        description="Whether to include sample data values in schema text chunks for RAG. From `NLSQL_INCLUDE_SAMPLE_VALUES_IN_CHUNKS`."
+    )
+    num_schema_chunks_for_prompt: int = Field(
+        default=int(os.getenv("NLSQL_NUM_SCHEMA_CHUNKS", 3)),
+        description="Number of schema chunks to retrieve from vector store for prompt context. From `NLSQL_NUM_SCHEMA_CHUNKS`."
+    )
+
+
+    class Config:
+        """Pydantic model configuration."""
+        validate_assignment = True
+        extra = 'ignore'
 
     @classmethod
     def load(cls, config_path: Optional[str] = None, **kwargs: Any) -> "NLToSQLConfig":
-        """
-        Loads configuration.
-        Priority: kwargs > environment variables > .env file (if setup in Pydantic model) > defaults.
-
-        Note: For .env file loading with a dynamic path, `python-dotenv` package
-        can be used explicitly before Pydantic model initialization, or if using
-        `pydantic-settings`, the model can be configured to load a specific .env file.
-        The current model primarily relies on direct os.getenv calls in Field defaults.
-
-        Args:
-            config_path: Path to a .env file to load. If provided, `python-dotenv`
-                         would typically be used here to load it into the environment
-                         before the Pydantic model is initialized. This example assumes
-                         that if `config_path` is used, it points to a file that
-                         `python-dotenv` can load, or that `pydantic-settings` is configured.
-                         For simplicity with pure Pydantic, this method mostly serves as a
-                         placeholder for more complex loading strategies if needed.
-            **kwargs: Keyword arguments that will override any other loaded values.
-
-        Returns:
-            An instance of NLToSQLConfig.
-        """
+        """Loads the NL-to-SQL service configuration."""
         if config_path:
             try:
                 from dotenv import load_dotenv
                 loaded = load_dotenv(config_path, override=True)
                 if loaded:
-                    print(f"Loaded .env file from: {config_path}")
-                else:
-                    print(f"No .env file found at: {config_path} or it was empty.")
+                    print(f"[NLToSQLConfig] Loaded .env file from: {config_path}")
             except ImportError:
-                print("python-dotenv not installed, skipping .env file loading from path.")
+                print("[NLToSQLConfig] python-dotenv not installed, skipping .env file loading from custom path.")
+            except Exception as e:
+                 print(f"[NLToSQLConfig] Error loading .env file from {config_path}: {e}")
 
-        # Pydantic will automatically read environment variables that match field names
-        # (if Config.env_prefix is set and matches, or if names are exact without prefix).
-        # The explicit os.getenv in Field defaults already handles this.
-        # Kwargs passed here will override anything loaded from env or defaults.
         return cls(**kwargs)
 
-# Example Usage (for testing or direct script run):
 if __name__ == "__main__":
-    print("Loading NLToSQLConfig with defaults and environment variables...")
-    # Create a dummy .env for testing if it doesn't exist
-    if not os.path.exists(".test_nlsql_env"):
-        with open(".test_nlsql_env", "w") as f:
-            f.write("NLSQL_LLM_MODEL_NAME=test-mistral-from-env-file\n")
-            f.write("NLSQL_DB_HOST=testhost.example.com\n")
-            f.write("NLSQL_DISALLOWED_KEYWORDS=INSERT,UPDATE\n") # Test overriding list
+    print("Demonstrating NLToSQLConfig loading with RAG fields...")
+    test_env_file_path = ".test_nlsql_env_rag_configmanager"
+    with open(test_env_file_path, "w") as f:
+        f.write("NLSQL_LLM_MODEL_NAME=rag_model_from_file\n")
+        f.write("NLSQL_CHROMA_PATH=./test_chroma_rag\n")
+        f.write("NLSQL_CHROMA_COLLECTION=test_rag_collection\n")
+        f.write("NLSQL_SCHEMA_EMBEDDING_MODEL=test-embed-model\n")
+        f.write("NLSQL_INCLUDE_SAMPLE_VALUES_IN_CHUNKS=True\n")
+        f.write("NLSQL_DB_DEFAULT_SCHEMA=test_public\n")
+        f.write("NLSQL_NUM_SCHEMA_CHUNKS=4\n") # Test new field
 
-    # Test loading from a specific .env file
-    config_from_file = NLToSQLConfig.load(config_path=".test_nlsql_env")
-    print("\n--- Config loaded from .test_nlsql_env ---")
-    print(f"LLM Model: {config_from_file.llm.model_name}") # Should be test-mistral-from-env-file
-    print(f"DB Host: {config_from_file.db_schema_handler.host if config_from_file.db_schema_handler else 'N/A'}") # Should be testhost.example.com
-    print(f"Disallowed Keywords: {config_from_file.disallowed_sql_keywords}") # Should be ['INSERT', 'UPDATE']
 
-    # Test loading with kwargs override
-    config_with_kwargs = NLToSQLConfig.load(config_path=".test_nlsql_env", llm={"model_name": "override-model"})
-    print("\n--- Config loaded with kwargs override ---")
-    print(f"LLM Model: {config_with_kwargs.llm.model_name}") # Should be override-model
+    print(f"\n--- Loading config with .env file: {test_env_file_path} ---")
+    config_from_file = NLToSQLConfig.load(config_path=test_env_file_path)
+    print(f"LLM Model: {config_from_file.llm.model_name}")
+    assert config_from_file.llm.model_name == "rag_model_from_file"
+    print(f"Chroma Path: {config_from_file.chroma_persist_path}")
+    assert config_from_file.chroma_persist_path == "./test_chroma_rag"
+    print(f"Chroma Collection: {config_from_file.chroma_collection_name}")
+    assert config_from_file.chroma_collection_name == "test_rag_collection"
+    print(f"Schema Embedding Model: {config_from_file.schema_embedding_model_name}")
+    assert config_from_file.schema_embedding_model_name == "test-embed-model"
+    print(f"Include Sample Values: {config_from_file.include_sample_values_in_chunks}")
+    assert config_from_file.include_sample_values_in_chunks is True
+    print(f"Num Schema Chunks for Prompt: {config_from_file.num_schema_chunks_for_prompt}")
+    assert config_from_file.num_schema_chunks_for_prompt == 4
+    if config_from_file.db_schema_handler:
+        print(f"Default DB Schema Name: {config_from_file.db_schema_handler.default_schema_name}")
+        assert config_from_file.db_schema_handler.default_schema_name == "test_public"
 
-    # Test default loading (relies on env vars set in system or defaults)
-    # Unset env vars for a cleaner test of defaults for some fields if possible,
-    # or set specific ones for this test run.
-    # For example, to test default LLM model if NLSQL_LLM_MODEL_NAME is not set:
-    # if "NLSQL_LLM_MODEL_NAME" in os.environ: del os.environ["NLSQL_LLM_MODEL_NAME"]
-    print("\n--- Config loaded with system environment variables / defaults ---")
-    default_config = NLToSQLConfig.load()
-    print(f"LLM Model: {default_config.llm.model_name}")
-    print(f"Default Few-shot Path: {default_config.few_shot_examples_path}")
-    print(f"Default Base Prompt Path: {default_config.base_prompt_template_path}")
-    print(f"Default Disallowed Keywords: {default_config.disallowed_sql_keywords}")
-    if default_config.db_schema_handler:
-        print(f"Default DB Port: {default_config.db_schema_handler.port}") # Test validator
+    # Clean up test env vars set by dotenv
+    env_vars_to_clean = [
+        "NLSQL_LLM_MODEL_NAME", "NLSQL_CHROMA_PATH", "NLSQL_CHROMA_COLLECTION",
+        "NLSQL_SCHEMA_EMBEDDING_MODEL", "NLSQL_INCLUDE_SAMPLE_VALUES_IN_CHUNKS",
+        "NLSQL_DB_DEFAULT_SCHEMA", "NLSQL_NUM_SCHEMA_CHUNKS"
+    ]
+    for var in env_vars_to_clean:
+        if var in os.environ:
+            del os.environ[var]
 
-    # Clean up dummy .env file
-    if os.path.exists(".test_nlsql_env"):
-        os.remove(".test_nlsql_env")
+    if os.path.exists(test_env_file_path):
+        os.remove(test_env_file_path)
+    print(f"\nCleaned up dummy env file: {test_env_file_path}")
+    print("\nConfig manager RAG fields demonstration finished.")
