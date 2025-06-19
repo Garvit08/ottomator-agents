@@ -218,6 +218,10 @@ class NLToSQLConfig(BaseModel):
         default=int(os.getenv("NLSQL_MAX_PAGE_SIZE", 1000)),
         description="Maximum number of rows that can be requested in a single page. From `NLSQL_MAX_PAGE_SIZE`."
     )
+    query_cache_size: int = Field(
+        default=int(os.getenv("NLSQL_QUERY_CACHE_SIZE", 128)), # Default cache size of 128
+        description="Maximum number of (NLQ + context -> SQL + data) results to cache in memory. Set to 0 to disable."
+    )
 
     class Config:
         """Pydantic model configuration."""
